@@ -1,6 +1,19 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Garage Borrow backend (placeholder — fleshed out in a later prompt).
+Description: >
+  Garage Borrow backend — phone-only Cognito, DynamoDB single-table, S3+CloudFront
+  with OAC, HTTP API + Lambda (Node 20 / arm64). Region: us-east-2. Cost target
+  < $5/month at small scale.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cost-shape rationale (why this stack stays under $5/mo at small scale):
+#   - HTTP API (not REST): $1.00/M requests vs $3.50/M for REST API.
+#   - On-demand DynamoDB: no provisioned capacity charges; pay per request only.
+#   - CloudFront price class 100 (US/CA/EU): ~50% cheaper than global edges.
+#   - No NAT gateway, no VPC: saves ~$32/mo on NAT alone.
+#   - arm64 Lambda: 20% cheaper per ms than x86, faster cold starts at 512MB.
+#   - SMS via SNS billed per-message (no fixed Cognito MAU until >50k MAU).
+# ─────────────────────────────────────────────────────────────────────────────
 
 Parameters:
   Stage:
@@ -9,6 +22,11 @@ Parameters:
     AllowedValues:
       - dev
       - prod
+    Description: Deployment stage (dev | prod).
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    Description: CloudWatch Logs retention for all Lambda log groups.
 
 Globals:
   Function:
@@ -16,19 +34,760 @@ Globals:
     Architectures:
       - arm64
     MemorySize: 512
-    Timeout: 10
+    Timeout: 30
+    Tracing: Active
     Environment:
       Variables:
         STAGE: !Ref Stage
+        LOG_LEVEL: INFO
+        NODE_OPTIONS: "--enable-source-maps"
 
 Resources:
-  PlaceholderFunction:
+  # ───────────────────────── DynamoDB ─────────────────────────
+  GarageBorrowTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub GarageBorrow-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+        - AttributeName: GSI2PK
+          AttributeType: S
+        - AttributeName: GSI2SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: byUser
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: byInstanceStatus
+          KeySchema:
+            - AttributeName: GSI2PK
+              KeyType: HASH
+            - AttributeName: GSI2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      SSESpecification:
+        SSEEnabled: true
+        # Default to AWS-managed key (no extra KMS charges).
+
+  # ─────────────────────── Cognito (phone-only) ───────────────────────
+  # Cognito sends SMS via SNS; this role is what Cognito assumes to publish.
+  CognitoSmsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub garageborrow-cognito-sms-${Stage}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cognito-idp.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Sub garageborrow-${Stage}-external-id
+      Policies:
+        - PolicyName: SnsPublish
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: "*"
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub garageborrow-users-${Stage}
+      # Phone IS the username — no email, no aliases, no password-as-primary.
+      UsernameAttributes:
+        - phone_number
+      AutoVerifiedAttributes:
+        - phone_number
+      MfaConfiguration: "OFF" # SMS code IS the auth (custom auth flow); not MFA.
+      Policies:
+        PasswordPolicy:
+          # Cognito requires a password policy even when we don't use passwords.
+          # Custom-auth flow bypasses it; this just satisfies the schema.
+          MinimumLength: 8
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+          RequireUppercase: false
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_phone_number
+            Priority: 1
+      Schema:
+        - Name: phone_number
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: garages
+          # Cognito has no native list type — store as JSON string of up to 20 IDs.
+          # 2048 chars holds ~20 ULIDs/UUIDs comfortably.
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: "0"
+            MaxLength: "2048"
+      SmsConfiguration:
+        SnsCallerArn: !GetAtt CognitoSmsRole.Arn
+        ExternalId: !Sub garageborrow-${Stage}-external-id
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub garageborrow-pwa-${Stage}
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false # PKCE / public client used directly by the PWA.
+      RefreshTokenValidity: 30
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      ExplicitAuthFlows:
+        - ALLOW_CUSTOM_AUTH # SMS-code-as-auth challenge flow
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH # required to be present even if unused
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - https://yourgarage.com/auth/callback
+        - http://localhost:5173/auth/callback
+      LogoutURLs:
+        - https://yourgarage.com/auth/logout
+        - http://localhost:5173/auth/logout
+      PreventUserExistenceErrors: ENABLED
+
+  # ─────────────────────────── S3 buckets ───────────────────────────
+  ImagesBucket:
+    Type: AWS::S3::Bucket
+    # The bucket needs ImageResizerInvokePermission to exist before its
+    # NotificationConfiguration is applied; otherwise CloudFormation rolls back
+    # with "Unable to validate the following destination configurations".
+    DependsOn:
+      - ImageResizerInvokePermission
+    Properties:
+      BucketName: !Sub garageborrow-images-${Stage}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt ImageResizerFunction.Arn
+      LifecycleConfiguration:
+        Rules:
+          - Id: NoncurrentToGlacierIR
+            Status: Enabled
+            NoncurrentVersionTransitions:
+              # GLACIER_IR ≈ "Glacier Instant Retrieval" — closest to "Glacier IA"
+              # for image assets where occasional access still needs to be fast.
+              - StorageClass: GLACIER_IR
+                TransitionInDays: 30
+            NoncurrentVersionExpirationInDays: 365
+
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub garageborrow-web-${Stage}
+      VersioningConfiguration:
+        Status: Suspended
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  # ─────────────────────── CloudFront + OAC ───────────────────────
+  CloudFrontOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub garageborrow-oac-${Stage}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub Garage Borrow CDN (${Stage})
+        # Aliases: custom domain — uncomment and add ViewerCertificate after
+        # validating an ACM cert in us-east-1 (CloudFront only accepts certs
+        # from us-east-1 regardless of the stack's deployment region).
+        # Aliases:
+        #   - garageborrow.example.com
+        # ViewerCertificate:
+        #   AcmCertificateArn: arn:aws:acm:us-east-1:ACCOUNT:certificate/UUID
+        #   SslSupportMethod: sni-only
+        #   MinimumProtocolVersion: TLSv1.2_2021
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+        IPV6Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: webOrigin
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt CloudFrontOac.Id
+          - Id: imagesOrigin
+            DomainName: !GetAtt ImagesBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt CloudFrontOac.Id
+        DefaultCacheBehavior:
+          TargetOriginId: webOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # Managed CachingOptimized policy — no auth on static PWA assets.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CacheBehaviors:
+          - PathPattern: /img/*
+            TargetOriginId: imagesOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # SPA fallback: 403/404 → /index.html with HTTP 200 so client-side
+        # routing can take over. (Spec called this a "ResponseHeadersPolicy"
+        # but the actual mechanism is CloudFront CustomErrorResponses.)
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${WebBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  ImagesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImagesBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${ImagesBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  # ─────────────────────── HTTP API ───────────────────────
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+      # Auto-deploy to the default stage is on by default for AWS::Serverless::HttpApi.
+      CorsConfiguration:
+        AllowOrigins:
+          - https://yourgarage.com
+          - http://localhost:5173
+        AllowMethods:
+          - GET
+          - POST
+          - PATCH
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+        MaxAge: 3600
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 25
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        Authorizers:
+          CognitoAuth:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+              audience:
+                - !Ref UserPoolClient
+
+  # ─────────────────────── Lambda: api ───────────────────────
+  ApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub garageborrow-placeholder-${Stage}
-      CodeUri: ../apps/api/dist/
-      Handler: index.handler
+      FunctionName: !Sub garageborrow-api-${Stage}
+      CodeUri: ../apps/api/
+      Handler: dist/index.handler
+      MemorySize: 512
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref GarageBorrowTable
+          IMAGES_BUCKET: !Ref ImagesBucket
+          USER_POOL_ID: !Ref UserPool
+          COGNITO_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:BatchGetItem
+                - dynamodb:BatchWriteItem
+                - dynamodb:ConditionCheckItem
+                - dynamodb:TransactGetItems
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt GarageBorrowTable.Arn
+                - !Sub ${GarageBorrowTable.Arn}/index/*
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: !Sub ${ImagesBucket.Arn}/*
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - cognito-idp:AdminGetUser
+                - cognito-idp:AdminUpdateUserAttributes
+              Resource: !GetAtt UserPool.Arn
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource: "*"
+      Events:
+        DefaultProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            # $default catch-all route — the api Lambda owns its own routing.
+            Method: ANY
+            Path: /{proxy+}
+        RootProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: ANY
+            Path: /
+
+  ApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/garageborrow-api-${Stage}
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ─────────────────────── Lambda: notifier ───────────────────────
+  NotifierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub garageborrow-notifier-${Stage}
+      CodeUri: ../apps/api/
+      Handler: dist/notifier.handler
+      MemorySize: 512
+      Timeout: 60
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref GarageBorrowTable
+          USER_POOL_ID: !Ref UserPool
+          VAPID_PUBLIC_KEY_PARAM: !Sub /garageborrow/${Stage}/vapid_public_key
+          VAPID_PRIVATE_KEY_PARAM: !Sub /garageborrow/${Stage}/vapid_private_key
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:BatchGetItem
+              Resource:
+                - !GetAtt GarageBorrowTable.Arn
+                - !Sub ${GarageBorrowTable.Arn}/index/*
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: "*"
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/garageborrow/${Stage}/vapid_public_key
+                - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/garageborrow/${Stage}/vapid_private_key
+      Events:
+        DailyOverdueReminders:
+          Type: Schedule
+          Properties:
+            # 13:00 UTC ≈ 9am EDT / 8am EST — close enough for a daily reminder.
+            # the state timezone is America/New_York (most of the state
+            # is on Eastern time); EventBridge cron does not support timezones,
+            # so we accept the seasonal one-hour drift.
+            Schedule: cron(0 13 * * ? *)
+            Name: !Sub garageborrow-daily-overdue-${Stage}
+            Description: Daily overdue-loan reminder push notifications.
+
+  NotifierFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/garageborrow-notifier-${Stage}
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ─────────────────────── Lambda: imageResizer ───────────────────────
+  # The S3-trigger wiring is done out-of-band via NotificationConfiguration
+  # on the bucket (below) plus an explicit Lambda::Permission. SAM's
+  # `Events: { Type: S3 }` would auto-wire it but creates the well-known
+  # circular dependency (Bucket ↔ Function). Hardcoded names + explicit
+  # resources break the cycle.
+  ImageResizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub garageborrow-image-resizer-${Stage}
+      CodeUri: ../apps/api/
+      Handler: dist/image-resizer.handler
+      MemorySize: 1024
+      Timeout: 60
+      Environment:
+        Variables:
+          # Hardcoded (not !Ref) to keep the function from depending on the bucket.
+          IMAGES_BUCKET: !Sub garageborrow-images-${Stage}
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::garageborrow-images-${Stage}/*
+
+  ImageResizerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ImageResizerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      # Hardcoded source ARN — referencing the bucket by !Ref would re-introduce
+      # the circular dependency.
+      SourceArn: !Sub arn:${AWS::Partition}:s3:::garageborrow-images-${Stage}
+
+  ImageResizerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/garageborrow-image-resizer-${Stage}
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ─────────────────────── Lambda: accountCleaner ───────────────────────
+  AccountCleanerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub garageborrow-account-cleaner-${Stage}
+      CodeUri: ../apps/api/
+      Handler: dist/account-cleaner.handler
+      MemorySize: 512
+      Timeout: 300
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref GarageBorrowTable
+          USER_POOL_ID: !Ref UserPool
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:BatchGetItem
+                - dynamodb:DeleteItem
+                - dynamodb:BatchWriteItem
+              Resource:
+                - !GetAtt GarageBorrowTable.Arn
+                - !Sub ${GarageBorrowTable.Arn}/index/*
+            - Effect: Allow
+              Action: cognito-idp:AdminDeleteUser
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        DailyAccountCleanup:
+          Type: Schedule
+          # 07:00 UTC ≈ 3am ET — off-peak window.
+          Properties:
+            Schedule: cron(0 7 * * ? *)
+            Name: !Sub garageborrow-daily-cleanup-${Stage}
+            Description: Daily cleanup of accounts marked for deletion.
+
+  AccountCleanerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/garageborrow-account-cleaner-${Stage}
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ─────────────────────── SSM Parameters (placeholders) ───────────────────────
+  # CloudFormation cannot create SecureString parameters directly. These are
+  # written as String placeholders; replace them with real SecureString values
+  # using `pnpm tsx scripts/gen-vapid.ts --stage <stage>` after first deploy
+  # (the script deletes & recreates each parameter as type SecureString).
+  VapidPublicKeyParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /garageborrow/${Stage}/vapid_public_key
+      Type: String
+      Value: PLACEHOLDER_RUN_GEN_VAPID_SCRIPT
+      Description: VAPID public key for web-push (replace via gen-vapid.ts).
+
+  VapidPrivateKeyParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /garageborrow/${Stage}/vapid_private_key
+      Type: String
+      Value: PLACEHOLDER_RUN_GEN_VAPID_SCRIPT
+      Description: VAPID private key for web-push (replace via gen-vapid.ts).
+
+  # ─────────────────────── Alerts: SNS + CloudWatch alarms ───────────────────────
+  # NOTE: Subscribing the owner's phone/email to GarageBorrowAlerts is a manual
+  # post-deploy step (`aws sns subscribe ...`) — keeping the subscriber address
+  # out of source control. Future improvement: a separate SSM parameter for the
+  # owner contact and a Subscription resource that reads it.
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub GarageBorrowAlerts-${Stage}
+      DisplayName: GarageBorrow
+
+  # NOTE: AWS Billing metrics (AWS/Billing, EstimatedCharges) are published only
+  # in us-east-1. Deploying these alarms to us-east-2 means they will evaluate
+  # against a metric that is never populated and will sit in INSUFFICIENT_DATA.
+  # For real billing alerting, re-deploy these three alarms via a sibling
+  # us-east-1 stack. They are kept here so the spec is faithfully represented.
+  BillingAlarm5USD:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-billing-5usd-${Stage}
+      AlarmDescription: Estimated AWS charges exceeded $5.
+      Namespace: AWS/Billing
+      MetricName: EstimatedCharges
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      Statistic: Maximum
+      Period: 21600
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  BillingAlarm10USD:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-billing-10usd-${Stage}
+      AlarmDescription: Estimated AWS charges exceeded $10.
+      Namespace: AWS/Billing
+      MetricName: EstimatedCharges
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      Statistic: Maximum
+      Period: 21600
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  BillingAlarm25USD:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-billing-25usd-${Stage}
+      AlarmDescription: Estimated AWS charges exceeded $25.
+      Namespace: AWS/Billing
+      MetricName: EstimatedCharges
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      Statistic: Maximum
+      Period: 21600
+      EvaluationPeriods: 1
+      Threshold: 25
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  ApiErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-api-error-rate-${Stage}
+      AlarmDescription: api Lambda error rate above 5% over 5 minutes.
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+      Metrics:
+        - Id: errorRate
+          Expression: "(errors / invocations) * 100"
+          Label: ErrorPercentage
+          ReturnData: true
+        - Id: errors
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Errors
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref ApiFunction
+            Period: 300
+            Stat: Sum
+        - Id: invocations
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Invocations
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref ApiFunction
+            Period: 300
+            Stat: Sum
+
+  DynamoDbThrottlingAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-ddb-throttles-${Stage}
+      AlarmDescription: DynamoDB returned any throttled requests.
+      Namespace: AWS/DynamoDB
+      MetricName: ThrottledRequests
+      Dimensions:
+        - Name: TableName
+          Value: !Ref GarageBorrowTable
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
 
 Outputs:
-  Stage:
-    Value: !Ref Stage
+  ApiUrl:
+    Description: HTTP API base URL.
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+    Export:
+      Name: !Sub garageborrow-${Stage}-ApiUrl
+  CloudFrontUrl:
+    Description: CloudFront distribution URL (default cf domain).
+    Value: !Sub https://${Distribution.DomainName}
+    Export:
+      Name: !Sub garageborrow-${Stage}-CloudFrontUrl
+  UserPoolId:
+    Description: Cognito User Pool ID.
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub garageborrow-${Stage}-UserPoolId
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID (PKCE / public).
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub garageborrow-${Stage}-UserPoolClientId
+  ImagesBucketName:
+    Description: S3 bucket for user-uploaded images.
+    Value: !Ref ImagesBucket
+    Export:
+      Name: !Sub garageborrow-${Stage}-ImagesBucketName
+  WebBucketName:
+    Description: S3 bucket hosting the static PWA build.
+    Value: !Ref WebBucket
+    Export:
+      Name: !Sub garageborrow-${Stage}-WebBucketName
+  DdbTableName:
+    Description: DynamoDB single-table name.
+    Value: !Ref GarageBorrowTable
+    Export:
+      Name: !Sub garageborrow-${Stage}-DdbTableName
+  AlertsTopicArn:
+    Description: SNS topic for CloudWatch alarm notifications.
+    Value: !Ref AlertsTopic
+    Export:
+      Name: !Sub garageborrow-${Stage}-AlertsTopicArn
