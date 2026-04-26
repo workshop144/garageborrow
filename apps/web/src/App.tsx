@@ -13,8 +13,9 @@ import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
 import ToolDetail from "./pages/ToolDetail";
 import MyStuff from "./pages/MyStuff";
-import Profile from "./pages/Profile";
-import Notifications from "./pages/Notifications";
+import Members from "./pages/Members";
+import ProfileSettings from "./pages/ProfileSettings";
+import NotificationsInbox from "./pages/NotificationsInbox";
 import Donate from "./pages/Donate";
 import PayItForward from "./pages/PayItForward";
 import Admin from "./pages/Admin";
@@ -83,7 +84,7 @@ export default function App(): JSX.Element {
                   path="/me/profile"
                   element={
                     <ProtectedRoute>
-                      <Profile />
+                      <ProfileSettings />
                     </ProtectedRoute>
                   }
                 />
@@ -91,7 +92,15 @@ export default function App(): JSX.Element {
                   path="/me/notifications"
                   element={
                     <ProtectedRoute>
-                      <Notifications />
+                      <NotificationsInbox />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/g/:garage/members"
+                  element={
+                    <ProtectedRoute>
+                      <Members />
                     </ProtectedRoute>
                   }
                 />
