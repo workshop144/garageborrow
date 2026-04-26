@@ -12,6 +12,13 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: "prompt",
+        // We hand-write src/sw.ts so we can attach a 'push' handler.
+        // injectManifest preserves workbox precaching while letting us own
+        // the listener wiring; the alternative (registerType: "autoUpdate"
+        // with a generated SW) doesn't expose the push event.
+        strategies: "injectManifest",
+        srcDir: "src",
+        filename: "sw.ts",
         includeAssets: [
           "icon-source.svg",
           "icon-32-favicon.png",
@@ -44,44 +51,8 @@ export default defineConfig(({ mode }) => {
             },
           ],
         },
-        workbox: {
-          navigateFallback: "/offline.html",
+        injectManifest: {
           globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
-          runtimeCaching: [
-            {
-              urlPattern: /\/v1\//,
-              handler: "NetworkFirst",
-              options: {
-                cacheName: "api",
-                networkTimeoutSeconds: 5,
-                expiration: { maxAgeSeconds: 60 * 5, maxEntries: 50 },
-              },
-            },
-            {
-              urlPattern: /\/img\//,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "images",
-                expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              },
-            },
-            {
-              urlPattern: /\.(?:png|jpg|jpeg|webp|svg|ico)$/,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "static-images",
-                expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              },
-            },
-            {
-              urlPattern: /\.(?:js|css|woff2)$/,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "static-assets",
-                expiration: { maxEntries: 60, maxAgeSeconds: 60 * 60 * 24 * 365 },
-              },
-            },
-          ],
         },
       }),
     ],

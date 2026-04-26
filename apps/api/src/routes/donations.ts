@@ -135,7 +135,8 @@ donationRoutes.post("/v1/g/:garage/admin/donations/:id/decide", async (c) => {
     await invokeNotifier({
       type: "donation_declined",
       garage_id: garage.id,
-      payload: { donation_id: offer.id },
+      user_phone: offer.donor_phone,
+      payload: { donation_id: offer.id, reason: body.decline_reason },
     });
     return c.json({ donation: updated });
   }
@@ -178,6 +179,7 @@ donationRoutes.post("/v1/g/:garage/admin/donations/:id/decide", async (c) => {
   await invokeNotifier({
     type: "donation_accepted",
     garage_id: garage.id,
+    user_phone: offer.donor_phone,
     payload: { donation_id: offer.id, resulting_item_id: item.id },
   });
   return c.json({ donation: updated, item });

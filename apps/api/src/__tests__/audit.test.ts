@@ -43,11 +43,14 @@ describe("audit middleware", () => {
     });
     expect(res.status).toBe(200);
 
+    // Tier promotion writes the user-action entry plus a separate
+    // notification.dispatched.tier_promoted entry from invokeNotifier;
+    // assert on the user-action one specifically.
     const entries = auditEntries();
-    expect(entries.length).toBe(1);
-    const entry = entries[0]!;
+    const tierEntry = entries.find((e) => e["action_type"] === "member.tier_changed");
+    expect(tierEntry).toBeDefined();
+    const entry = tierEntry!;
     expect(entry["actor_phone"]).toBe(OWNER_PHONE);
-    expect(entry["action_type"]).toBe("member.tier_changed");
     expect(entry["entity_type"]).toBe("member");
     expect(entry["entity_id"]).toBe(FAMILY_PHONE);
     expect((entry["before_snapshot"] as { tier: string }).tier).toBe("friend");

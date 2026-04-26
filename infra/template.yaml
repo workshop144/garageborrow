@@ -177,6 +177,7 @@ Resources:
       Handler: dist/define-auth-challenge.handler
       MemorySize: 256
       Timeout: 5
+      ReservedConcurrentExecutions: 20
 
   DefineAuthChallengeInvokePermission:
     Type: AWS::Lambda::Permission
@@ -200,6 +201,7 @@ Resources:
       Handler: dist/create-auth-challenge.handler
       MemorySize: 256
       Timeout: 10
+      ReservedConcurrentExecutions: 20
       Policies:
         - Statement:
             - Effect: Allow
@@ -228,6 +230,7 @@ Resources:
       Handler: dist/verify-auth-challenge.handler
       MemorySize: 256
       Timeout: 5
+      ReservedConcurrentExecutions: 20
 
   VerifyAuthChallengeInvokePermission:
     Type: AWS::Lambda::Permission
@@ -471,6 +474,34 @@ Resources:
               audience:
                 - !Ref UserPoolClient
 
+  # ─────────────────────── Dead-letter queues ───────────────────────
+  # Each Lambda below points its async-invoke DeadLetterQueue at one of these
+  # SQS queues. Failed events land in the DLQ for inspection rather than
+  # disappearing; the alarms below page on first arrival.
+  ApiDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub garageborrow-api-dlq-${Stage}
+      MessageRetentionPeriod: 1209600
+
+  NotifierDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub garageborrow-notifier-dlq-${Stage}
+      MessageRetentionPeriod: 1209600
+
+  ImageResizerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub garageborrow-image-resizer-dlq-${Stage}
+      MessageRetentionPeriod: 1209600
+
+  AccountCleanerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub garageborrow-account-cleaner-dlq-${Stage}
+      MessageRetentionPeriod: 1209600
+
   # ─────────────────────── Lambda: api ───────────────────────
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -480,12 +511,17 @@ Resources:
       Handler: dist/index.handler
       MemorySize: 512
       Timeout: 30
+      ReservedConcurrentExecutions: 50
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ApiDLQ.Arn
       Environment:
         Variables:
           TABLE_NAME: !Ref GarageBorrowTable
           IMAGES_BUCKET: !Ref ImagesBucket
           USER_POOL_ID: !Ref UserPool
           COGNITO_CLIENT_ID: !Ref UserPoolClient
+          NOTIFIER_FUNCTION_NAME: !Sub garageborrow-notifier-${Stage}
       Policies:
         - Statement:
             - Effect: Allow
@@ -521,6 +557,12 @@ Resources:
             - Effect: Allow
               Action: ses:SendEmail
               Resource: "*"
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:garageborrow-notifier-${Stage}
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt ApiDLQ.Arn
       Events:
         DefaultProxy:
           Type: HttpApi
@@ -551,6 +593,10 @@ Resources:
       Handler: dist/notifier.handler
       MemorySize: 512
       Timeout: 60
+      ReservedConcurrentExecutions: 10
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt NotifierDLQ.Arn
       Environment:
         Variables:
           TABLE_NAME: !Ref GarageBorrowTable
@@ -562,7 +608,10 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
                 - dynamodb:Query
+                - dynamodb:Scan
                 - dynamodb:BatchGetItem
               Resource:
                 - !GetAtt GarageBorrowTable.Arn
@@ -575,6 +624,9 @@ Resources:
               Resource:
                 - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/garageborrow/${Stage}/vapid_public_key
                 - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/garageborrow/${Stage}/vapid_private_key
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt NotifierDLQ.Arn
       Events:
         DailyOverdueReminders:
           Type: Schedule
@@ -607,6 +659,10 @@ Resources:
       Handler: dist/image-resizer.handler
       MemorySize: 1024
       Timeout: 60
+      ReservedConcurrentExecutions: 5
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ImageResizerDLQ.Arn
       Environment:
         Variables:
           # Hardcoded (not !Ref) to keep the function from depending on the bucket.
@@ -618,6 +674,9 @@ Resources:
                 - s3:GetObject
                 - s3:PutObject
               Resource: !Sub arn:${AWS::Partition}:s3:::garageborrow-images-${Stage}/*
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt ImageResizerDLQ.Arn
 
   ImageResizerInvokePermission:
     Type: AWS::Lambda::Permission
@@ -645,6 +704,10 @@ Resources:
       Handler: dist/account-cleaner.handler
       MemorySize: 512
       Timeout: 300
+      ReservedConcurrentExecutions: 1
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt AccountCleanerDLQ.Arn
       Environment:
         Variables:
           TABLE_NAME: !Ref GarageBorrowTable
@@ -654,6 +717,7 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
+                - dynamodb:PutItem
                 - dynamodb:Query
                 - dynamodb:Scan
                 - dynamodb:BatchGetItem
@@ -665,6 +729,9 @@ Resources:
             - Effect: Allow
               Action: cognito-idp:AdminDeleteUser
               Resource: !GetAtt UserPool.Arn
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt AccountCleanerDLQ.Arn
       Events:
         DailyAccountCleanup:
           Type: Schedule
@@ -825,6 +892,86 @@ Resources:
         - Name: TableName
           Value: !Ref GarageBorrowTable
       Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  # ─────────────────────── DLQ alarms ───────────────────────
+  # Any message in any Lambda DLQ pages the alerts topic immediately. The
+  # alarms are deliberately sensitive — even one failed async invoke is worth
+  # eyeballing at this scale.
+  ApiDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-api-dlq-${Stage}
+      AlarmDescription: Messages landed in the api Lambda DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ApiDLQ.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  NotifierDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-notifier-dlq-${Stage}
+      AlarmDescription: Messages landed in the notifier Lambda DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt NotifierDLQ.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  ImageResizerDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-image-resizer-dlq-${Stage}
+      AlarmDescription: Messages landed in the image-resizer Lambda DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ImageResizerDLQ.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  AccountCleanerDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub garageborrow-account-cleaner-dlq-${Stage}
+      AlarmDescription: Messages landed in the account-cleaner Lambda DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AccountCleanerDLQ.QueueName
+      Statistic: Maximum
       Period: 60
       EvaluationPeriods: 1
       Threshold: 0

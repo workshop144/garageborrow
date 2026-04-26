@@ -1,6 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { NotificationPrefs as NotificationPrefsValue } from "@garageborrow/shared";
 
+import {
+  ensurePushSubscription,
+  getPermissionState,
+  type PermissionState,
+} from "../../lib/pushSubscription";
 import { QuietHoursPicker, isValidHhMm } from "./QuietHoursPicker";
 
 type Props = {
@@ -18,24 +23,39 @@ const TOGGLE_FIELDS: Array<{ key: keyof NotificationPrefsValue; label: string; h
 
 export function NotificationPrefs({ value, onChange, saving }: Props): JSX.Element {
   const [pushPromptShown, setPushPromptShown] = useState(false);
+  const [permission, setPermission] = useState<PermissionState>(() => getPermissionState());
+
+  useEffect(() => {
+    setPermission(getPermissionState());
+  }, [value.push_enabled]);
 
   function set<K extends keyof NotificationPrefsValue>(key: K, v: NotificationPrefsValue[K]): void {
     onChange({ ...value, [key]: v });
   }
 
   async function togglePush(next: boolean): Promise<void> {
-    if (next && typeof window !== "undefined" && "Notification" in window) {
-      try {
-        if (Notification.permission === "default") {
-          setPushPromptShown(true);
-          await Notification.requestPermission();
-        }
-      } catch {
-        // ignore — silent fall-through to set the flag anyway
+    if (next) {
+      setPushPromptShown(true);
+      // ensurePushSubscription handles permission, SW registration, and the
+      // POST to /v1/me/push-subscription. We mirror its outcome into the
+      // local permission state so the UX label updates without a reload.
+      const result = await ensurePushSubscription();
+      setPermission(getPermissionState());
+      if (result.status === "denied") {
+        // Don't claim push is enabled if the browser denied it.
+        set("push_enabled", false);
+        return;
       }
     }
     set("push_enabled", next);
   }
+
+  const permissionLabel = (() => {
+    if (permission === "unsupported") return "Not supported on this device";
+    if (permission === "denied") return "Permission denied — open browser settings";
+    if (permission === "granted") return value.push_enabled ? "Enabled" : "Disabled";
+    return "Disabled";
+  })();
 
   return (
     <div className="space-y-4" data-testid="notification-prefs">
@@ -83,9 +103,13 @@ export function NotificationPrefs({ value, onChange, saving }: Props): JSX.Eleme
               onChange={(e) => void togglePush(e.target.checked)}
               className="h-5 w-5 accent-gold-bright"
               data-testid="pref-push"
+              disabled={permission === "unsupported"}
             />
           </label>
         </div>
+        <p className="mt-2 text-xs opacity-70" data-testid="pref-push-status">
+          Push notifications: <span className="font-semibold">{permissionLabel}</span>
+        </p>
         {pushPromptShown ? (
           <p className="mt-2 text-xs opacity-70">
             We just asked your browser for push permission. If you missed the prompt, check your

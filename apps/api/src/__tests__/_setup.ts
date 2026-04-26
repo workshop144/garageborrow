@@ -7,11 +7,13 @@
 // IndexName: "byUser".
 
 import {
+  BatchWriteCommand,
   DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
   QueryCommand,
+  ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { mockClient } from "aws-sdk-client-mock";
@@ -43,12 +45,20 @@ export function listAll(): Item[] {
   return Array.from(store.items.values());
 }
 
-function applyUpdate(item: Item, cmd: UpdateCommand): Item {
+interface UpdateOutcome {
+  next: Item;
+  // Mirrors the subset of UPDATED_NEW that the production code consumes.
+  attributes: Record<string, unknown>;
+}
+
+function applyUpdate(item: Item, cmd: UpdateCommand): UpdateOutcome {
   const expr = cmd.input.UpdateExpression ?? "";
   const values = cmd.input.ExpressionAttributeValues ?? {};
   const names = cmd.input.ExpressionAttributeNames ?? {};
   const next = { ...item };
-  // Only ADD <field> :delta is used by the api today.
+  const attributes: Record<string, unknown> = {};
+  // ADD supports both "ADD field :delta" and multiple field/delta pairs.
+  // Only the single-field shape is used in the codebase today.
   const addMatch = /ADD\s+(#?\w+)\s+(:\w+)/.exec(expr);
   if (addMatch && addMatch[1] && addMatch[2]) {
     const rawName = addMatch[1];
@@ -58,9 +68,10 @@ function applyUpdate(item: Item, cmd: UpdateCommand): Item {
     if (typeof delta === "number") {
       const current = typeof next[field] === "number" ? (next[field] as number) : 0;
       next[field] = current + delta;
+      attributes[field] = next[field];
     }
   }
-  return next;
+  return { next, attributes };
 }
 
 function evalFilter(
@@ -71,7 +82,12 @@ function evalFilter(
   if (!filterExpr) return true;
   // Hand-evaluate the small set of filters used by the codebase. This is
   // intentionally limited — extending it should be cheaper than pulling in
-  // dynamodb-local.
+  // dynamodb-local. We support AND-joined and OR-joined clauses but not
+  // mixed precedence (good enough for our actual filter usage).
+  if (/\sOR\s/i.test(filterExpr)) {
+    const orParts = filterExpr.split(/\s+OR\s+/i);
+    return orParts.some((p) => evalFilter(it, p, values));
+  }
   const parts = filterExpr.split(/\s+AND\s+/i);
   for (const p of parts) {
     const trimmed = p.trim();
@@ -91,6 +107,18 @@ function evalFilter(
     const exists = /^attribute_exists\((\w+)\)$/.exec(trimmed);
     if (exists && exists[1]) {
       if (it[exists[1]] === undefined) return false;
+      continue;
+    }
+    const beginsPk = /^begins_with\(PK,\s*(:\w+)\)$/.exec(trimmed);
+    if (beginsPk && beginsPk[1]) {
+      const v = values[beginsPk[1]];
+      if (typeof v !== "string" || !it.PK.startsWith(v)) return false;
+      continue;
+    }
+    const beginsSk = /^begins_with\(SK,\s*(:\w+)\)$/.exec(trimmed);
+    if (beginsSk && beginsSk[1]) {
+      const v = values[beginsSk[1]];
+      if (typeof v !== "string" || !it.SK.startsWith(v)) return false;
       continue;
     }
     const statusEq = /^#status\s*=\s*(:\w+)$/.exec(trimmed);
@@ -128,8 +156,42 @@ export function installDdbMock(): void {
   mock.on(UpdateCommand).callsFake((input) => {
     const k = `${input.Key.PK}#${input.Key.SK}`;
     const cur = store.items.get(k) ?? ({ PK: input.Key.PK, SK: input.Key.SK } as Item);
-    const next = applyUpdate(cur, new UpdateCommand(input));
-    store.items.set(k, next);
+    const outcome = applyUpdate(cur, new UpdateCommand(input));
+    store.items.set(k, outcome.next);
+    if (input.ReturnValues === "UPDATED_NEW") {
+      return Promise.resolve({ Attributes: outcome.attributes });
+    }
+    return Promise.resolve({});
+  });
+
+  mock.on(ScanCommand).callsFake((input) => {
+    const values = input.ExpressionAttributeValues ?? {};
+    const all = Array.from(store.items.values());
+    const filtered = all.filter((it) =>
+      evalFilter(it, input.FilterExpression ?? undefined, values),
+    );
+    return Promise.resolve({ Items: filtered });
+  });
+
+  mock.on(BatchWriteCommand).callsFake((input) => {
+    const tables = (input.RequestItems ?? {}) as Record<
+      string,
+      Array<{
+        DeleteRequest?: { Key: { PK: string; SK: string } };
+        PutRequest?: { Item: Item };
+      }>
+    >;
+    for (const reqs of Object.values(tables)) {
+      for (const r of reqs) {
+        if (r.DeleteRequest) {
+          const k = `${r.DeleteRequest.Key.PK}#${r.DeleteRequest.Key.SK}`;
+          store.items.delete(k);
+        } else if (r.PutRequest) {
+          const item = r.PutRequest.Item;
+          store.items.set(keyOf(item), item);
+        }
+      }
+    }
     return Promise.resolve({});
   });
 

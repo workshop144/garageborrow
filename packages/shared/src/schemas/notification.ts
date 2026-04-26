@@ -12,6 +12,10 @@ export const NotificationSchema = z.object({
   payload: z.record(z.string(), z.unknown()),
   channel: NotificationChannelSchema,
   sent_at: IsoDateTime,
+  // Set by the notifier when a non-urgent notification is held during quiet
+  // hours. The inbox UI still shows it (sorted by sent_at), but external
+  // channels (push/SMS) are deferred until this timestamp passes.
+  deliver_after: IsoDateTime.optional(),
   read_at: IsoDateTime.optional(),
 });
 

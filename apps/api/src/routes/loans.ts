@@ -117,6 +117,7 @@ loanRoutes.post("/v1/g/:garage/loans/:id/extend", async (c) => {
   await invokeNotifier({
     type: "loan_extended",
     garage_id: garage.id,
+    user_phone: loan.borrower_phone,
     payload: { loan_id: loan.id, new_expected_return_at: next.expected_return_at },
   });
   return c.json({ loan: next });
@@ -149,6 +150,7 @@ loanRoutes.post("/v1/g/:garage/loans/:id/return", async (c) => {
   await invokeNotifier({
     type: "loan_returned",
     garage_id: garage.id,
+    user_phone: loan.borrower_phone,
     payload: { loan_id: loan.id, claimed_at: ts },
   });
   return c.json({ loan: next, message: "Marked returned. Owner has 48h to dispute." });
@@ -174,6 +176,7 @@ loanRoutes.post("/v1/g/:garage/loans/:id/dispute", ownerOnly(), async (c) => {
   await invokeNotifier({
     type: "loan_disputed",
     garage_id: garage.id,
+    user_phone: loan.borrower_phone,
     payload: { loan_id: loan.id, reason: body.reason },
   });
   return c.json({ loan: next });

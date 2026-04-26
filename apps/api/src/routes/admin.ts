@@ -103,7 +103,8 @@ adminRoutes.patch("/v1/g/:garage/admin/members/:phone", async (c) => {
     await invokeNotifier({
       type: "tier_promoted",
       garage_id: garage.id,
-      payload: { user_phone: phone, new_tier: body.tier },
+      user_phone: phone,
+      payload: { new_tier: body.tier, promoted_to_family: promotedToFamily },
     });
   }
   return c.json({ membership: updated });
@@ -287,6 +288,7 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/return", async (c) => {
   await invokeNotifier({
     type: "loan_returned",
     garage_id: garage.id,
+    user_phone: loan.borrower_phone,
     payload: { loan_id: loan.id, claimed_at: ts, by: "owner" },
   });
   return c.json({ loan: updated });
@@ -309,11 +311,8 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/remind", async (c) => {
   await invokeNotifier({
     type: "loan_reminder",
     garage_id: garage.id,
-    payload: {
-      loan_id: loan.id,
-      borrower_phone: loan.borrower_phone,
-      expected_return_at: loan.expected_return_at,
-    },
+    user_phone: loan.borrower_phone,
+    payload: { loan_id: loan.id, expected_return_at: loan.expected_return_at },
   });
   return c.json({ status: "queued" });
 });

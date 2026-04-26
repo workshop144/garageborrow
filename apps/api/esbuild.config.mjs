@@ -9,7 +9,10 @@ const common = {
   format: "esm",
   sourcemap: true,
   minify: !watch,
-  external: ["@aws-sdk/*"],
+  // sharp is shipped via the public sharp Lambda layer rather than bundled
+  // (the platform-specific binary would balloon the zip and break cross-arch
+  // deploys). web-push is bundled normally — pure JS, ~50KB.
+  external: ["@aws-sdk/*", "sharp"],
   banner: {
     js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
   },
@@ -18,6 +21,9 @@ const common = {
 
 const targets = [
   { entryPoints: ["src/index.ts"], outfile: "dist/index.js" },
+  { entryPoints: ["src/notifier.ts"], outfile: "dist/notifier.js" },
+  { entryPoints: ["src/image-resizer.ts"], outfile: "dist/image-resizer.js" },
+  { entryPoints: ["src/account-cleaner.ts"], outfile: "dist/account-cleaner.js" },
   {
     entryPoints: ["src/cognito-triggers/define-auth-challenge.ts"],
     outfile: "dist/define-auth-challenge.mjs",

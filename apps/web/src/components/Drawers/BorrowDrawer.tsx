@@ -10,6 +10,11 @@ import {
 } from "../../lib/dates";
 import { liabilityCopyFor, resolveLiabilityTier, type LiabilityTier } from "../../lib/borrow-copy";
 import { ApiError } from "../../lib/api";
+import {
+  ensurePushSubscription,
+  hasPromptBeenShown,
+  markPromptShown,
+} from "../../lib/pushSubscription";
 import type { BorrowSuccess } from "../../hooks/useBorrow";
 import { useBorrow } from "../../hooks/useBorrow";
 import { Drawer } from "./Drawer";
@@ -175,6 +180,13 @@ export function BorrowDrawer({
     if (note.trim()) input.note = note.trim();
     borrow.mutate(input, {
       onSuccess: (result) => {
+        // First borrow is the moment we ask for push permission — anchored
+        // to a concrete value the user just opted into ("we'll let you know
+        // when stuff you're waiting on opens up") rather than on app open.
+        if (!hasPromptBeenShown()) {
+          markPromptShown();
+          void ensurePushSubscription();
+        }
         onSuccess(result);
       },
       onError: (err) => {
@@ -324,6 +336,12 @@ export function BorrowDrawer({
           {step === "liability" ? (
             <section className="space-y-4">
               <LiabilityCallout tier={tier} copy={copy} />
+              {!hasPromptBeenShown() ? (
+                <p className="rounded-lg bg-gold-bright/10 p-3 text-xs">
+                  After you confirm we&apos;ll ask if it&apos;s OK to send you push notifications,
+                  so we can let you know when stuff you&apos;re waiting on opens up.
+                </p>
+              ) : null}
               {borrow.isError && !conflict ? (
                 <p
                   role="alert"

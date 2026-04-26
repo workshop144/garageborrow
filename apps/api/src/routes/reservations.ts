@@ -53,6 +53,7 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
     await invokeNotifier({
       type: "reservation_decided",
       garage_id: garage.id,
+      user_phone: user.phone,
       payload: { reservation_id: reservation.id, status: "pending" },
     });
   }
