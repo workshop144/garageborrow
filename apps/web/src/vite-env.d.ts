@@ -12,6 +12,7 @@ interface ImportMetaEnv {
   readonly VITE_COGNITO_CLIENT_ID?: string;
   readonly VITE_TENANT_NAME?: string;
   readonly VITE_TENANT_SHORT_NAME?: string;
+  readonly VITE_GARAGE_SLUG?: string;
 }
 
 interface ImportMeta {
