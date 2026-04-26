@@ -1,5 +1,13 @@
-import { itemKey, tenantMemberKey, tenantMetaKey, tenantUserKey } from "@garageborrow/shared";
-import type { Garage, GarageMembership, Item, User } from "@garageborrow/shared";
+import {
+  gsi1LoanByUser,
+  instanceKey,
+  itemKey,
+  loanKey,
+  tenantMemberKey,
+  tenantMetaKey,
+  tenantUserKey,
+} from "@garageborrow/shared";
+import type { Garage, GarageMembership, Instance, Item, Loan, User } from "@garageborrow/shared";
 
 import { seedItem } from "./_setup.js";
 
@@ -114,4 +122,43 @@ export function seedItemRecord(overrides: Partial<Item> = {}): Item {
   const k = itemKey(GARAGE_ID, it.id);
   seedItem({ ...it, PK: k.pk, SK: k.sk });
   return it;
+}
+
+export function seedInstanceRecord(item_id: string, overrides: Partial<Instance> = {}): Instance {
+  const now = "2026-04-01T12:00:00Z";
+  const inst: Instance = {
+    id: overrides.id ?? `inst-${item_id}-1`,
+    item_id,
+    garage_id: GARAGE_ID,
+    label: "A",
+    quality_tier: "A",
+    status: "available",
+    created_at: now,
+    updated_at: now,
+    ...overrides,
+  };
+  const k = instanceKey(GARAGE_ID, item_id, inst.id);
+  seedItem({ ...inst, PK: k.pk, SK: k.sk });
+  return inst;
+}
+
+export function seedLoanRecord(overrides: Partial<Loan> & { item_id: string }): Loan {
+  const borrowed_at = overrides.borrowed_at ?? "2026-04-01T12:00:00Z";
+  const defaults: Loan = {
+    id: `loan-${overrides.item_id}-${borrowed_at}`,
+    garage_id: GARAGE_ID,
+    item_id: overrides.item_id,
+    borrower_phone: FAMILY_PHONE,
+    borrowed_at,
+    expected_return_at: "2026-04-04T12:00:00Z",
+    status: "returned",
+    extension_count: 0,
+    liability_acknowledged_at: borrowed_at,
+    liability_copy_version: "v1",
+  };
+  const loan: Loan = { ...defaults, ...overrides };
+  const k = loanKey(GARAGE_ID, borrowed_at.slice(0, 10), loan.id);
+  const gsi = gsi1LoanByUser(loan.borrower_phone, borrowed_at);
+  seedItem({ ...loan, PK: k.pk, SK: k.sk, ...gsi });
+  return loan;
 }

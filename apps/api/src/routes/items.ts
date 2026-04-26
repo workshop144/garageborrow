@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { resolveItemAccess } from "@garageborrow/shared";
-import { ItemSchema, ItemStatusSchema } from "@garageborrow/shared";
-import type { Item, ItemStatus } from "@garageborrow/shared";
+import { ItemSchema, ItemSortSchema, ItemStatusSchema } from "@garageborrow/shared";
+import type { Instance, Item, ItemCounts, ItemSort, ItemStatus, Loan } from "@garageborrow/shared";
 import { z } from "zod";
 
 import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
@@ -9,8 +9,10 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import {
   getItem,
+  listAllInstancesInGarage,
   listInstances,
   listItems,
+  listLoansByGarage,
   listWaitlist,
   putIncident,
   putItem,
@@ -22,6 +24,48 @@ import { loadGarageContext } from "../middleware/garage-context.js";
 import { idempotency } from "../middleware/idempotency.js";
 import { ownerOnly } from "../middleware/owner-only.js";
 
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+function computeItemCounts(instances: Instance[], itemLoans: Loan[]): ItemCounts {
+  const cutoff = Date.now() - THIRTY_DAYS_MS;
+  const borrows_last_30d = itemLoans.reduce(
+    (n, l) => (Date.parse(l.borrowed_at) >= cutoff ? n + 1 : n),
+    0,
+  );
+  const borrows_total = itemLoans.length;
+
+  if (instances.length === 0) {
+    // Single-unit items have no instance row; availability flips on the
+    // presence of an active loan.
+    const hasActive = itemLoans.some((l) => l.status === "active");
+    return {
+      available_count: hasActive ? 0 : 1,
+      total_count: 1,
+      borrows_total,
+      borrows_last_30d,
+    };
+  }
+  const total_count = instances.reduce((n, i) => (i.status === "retired" ? n : n + 1), 0);
+  const available_count = instances.reduce((n, i) => (i.status === "available" ? n + 1 : n), 0);
+  return { available_count, total_count, borrows_total, borrows_last_30d };
+}
+
+function sortEnrichedItems<T extends Item & ItemCounts>(items: T[], sort: ItemSort): T[] {
+  const out = [...items];
+  switch (sort) {
+    case "recent":
+      out.sort((a, b) => b.created_at.localeCompare(a.created_at));
+      break;
+    case "popular":
+      out.sort((a, b) => b.borrows_total - a.borrows_total);
+      break;
+    case "alphabetical":
+      out.sort((a, b) => a.name.localeCompare(b.name));
+      break;
+  }
+  return out;
+}
+
 export const itemRoutes = new Hono<AppEnv>();
 
 itemRoutes.use("/v1/g/:garage/items", requireAuth(), loadGarageContext());
@@ -31,18 +75,49 @@ itemRoutes.use("/v1/g/:garage/incidents", requireAuth(), ownerOnly());
 // GET /v1/g/:garage/items — list items filtered by user's tier. Items that
 // resolve to access === "hidden" are dropped entirely; for the rest we
 // attach an `access` field so the UI knows whether to show "Borrow" vs
-// "Request" vs nothing.
+// "Request" vs nothing. Each item is enriched with available_count /
+// total_count / borrows_total / borrows_last_30d so the UI doesn't have to
+// fan out a query per card.
 itemRoutes.get("/v1/g/:garage/items", async (c) => {
   const garage = mustGarage(c);
   const membership = mustMembership(c);
-  const items = await listItems(garage.id);
+  const sortRaw = c.req.query("sort") ?? "recent";
+  const parsedSort = ItemSortSchema.safeParse(sortRaw);
+  if (!parsedSort.success) {
+    throw new ApiError("bad_request", "Invalid sort; expected recent|popular|alphabetical");
+  }
+
+  const [items, allInstances, allLoans] = await Promise.all([
+    listItems(garage.id),
+    listAllInstancesInGarage(garage.id),
+    listLoansByGarage(garage.id),
+  ]);
+
+  const instancesByItem = new Map<string, Instance[]>();
+  for (const inst of allInstances) {
+    const arr = instancesByItem.get(inst.item_id);
+    if (arr) arr.push(inst);
+    else instancesByItem.set(inst.item_id, [inst]);
+  }
+  const loansByItem = new Map<string, Loan[]>();
+  for (const loan of allLoans) {
+    const arr = loansByItem.get(loan.item_id);
+    if (arr) arr.push(loan);
+    else loansByItem.set(loan.item_id, [loan]);
+  }
+
   const visible = items
     .map((it) => {
       const access = resolveItemAccess(membership.tier, it.min_tier, it.auto_approve_tier);
-      return { ...it, access };
+      const counts = computeItemCounts(
+        instancesByItem.get(it.id) ?? [],
+        loansByItem.get(it.id) ?? [],
+      );
+      return { ...it, access, ...counts };
     })
     .filter((it) => it.access !== "hidden");
-  return c.json({ items: visible });
+
+  return c.json({ items: sortEnrichedItems(visible, parsedSort.data) });
 });
 
 itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {
@@ -54,14 +129,19 @@ itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {
   if (!item) throw new ApiError("not_found", "Item not found");
   const access = resolveItemAccess(membership.tier, item.min_tier, item.auto_approve_tier);
   if (access === "hidden") throw new ApiError("not_found", "Item not found");
-  const instances = await listInstances(garage.id, itemId);
+  const [instances, allLoans] = await Promise.all([
+    listInstances(garage.id, itemId),
+    listLoansByGarage(garage.id),
+  ]);
+  const itemLoans = allLoans.filter((l) => l.item_id === itemId);
+  const counts = computeItemCounts(instances, itemLoans);
   const statusPills: string[] = [];
   if (item.status === "broken") statusPills.push("Broken");
   if (item.status === "maintenance") statusPills.push("In maintenance");
   if (item.status === "all_loaned") statusPills.push("All loaned out");
   if (item.status === "partial_loaned") statusPills.push("Partial");
   return c.json({
-    item: { ...item, access },
+    item: { ...item, access, ...counts },
     instances,
     status_pills: statusPills,
     handling_notes: item.handling_notes ?? "",

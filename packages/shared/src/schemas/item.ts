@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IsoDateTime, PhoneE164, PosInt, TierNameSchema } from "./common.js";
+import { IsoDateTime, NonNegInt, PhoneE164, PosInt, TierNameSchema } from "./common.js";
 
 export const ItemStatusSchema = z.enum([
   "available",
@@ -36,3 +36,30 @@ export const ItemSchema = z.object({
 
 export type Item = z.infer<typeof ItemSchema>;
 export type ItemInput = z.input<typeof ItemSchema>;
+
+// Visible access levels exposed to API clients. "hidden" items are filtered
+// out server-side, so list/detail responses only ever carry "request" or
+// "instant".
+export const ItemAccessSchema = z.enum(["request", "instant"]);
+export type ItemAccess = z.infer<typeof ItemAccessSchema>;
+
+export const ItemCountsSchema = z.object({
+  available_count: NonNegInt,
+  total_count: NonNegInt,
+  borrows_total: NonNegInt,
+  borrows_last_30d: NonNegInt,
+});
+export type ItemCounts = z.infer<typeof ItemCountsSchema>;
+
+export const ItemListEntrySchema = ItemSchema.extend({
+  access: ItemAccessSchema,
+}).merge(ItemCountsSchema);
+export type ItemListEntry = z.infer<typeof ItemListEntrySchema>;
+
+export const ItemDetailSchema = ItemSchema.extend({
+  access: ItemAccessSchema,
+}).merge(ItemCountsSchema);
+export type ItemDetail = z.infer<typeof ItemDetailSchema>;
+
+export const ItemSortSchema = z.enum(["recent", "popular", "alphabetical"]);
+export type ItemSort = z.infer<typeof ItemSortSchema>;

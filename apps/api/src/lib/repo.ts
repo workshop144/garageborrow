@@ -196,6 +196,24 @@ export async function listInstances(garage_id: string, item_id: string): Promise
   return (r.Items ?? []) as Instance[];
 }
 
+export async function listAllInstancesInGarage(garage_id: string): Promise<Instance[]> {
+  // Single query for all ITEM# records, partition out the instance rows
+  // (SK = ITEM#<item_id>#INST#<instance_id>, four `#`-segments).
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": `TENANT#${garage_id}`,
+        ":sk": "ITEM#",
+      },
+    }),
+  );
+  return (r.Items ?? []).filter(
+    (it) => typeof it["SK"] === "string" && (it["SK"] as string).split("#").length === 4,
+  ) as Instance[];
+}
+
 export async function putInstance(inst: Instance): Promise<void> {
   const k = instanceKey(inst.garage_id, inst.item_id, inst.id);
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, inst) }));
@@ -212,6 +230,20 @@ export async function putLoan(loan: Loan): Promise<void> {
       Item: { ...loan, PK: k.pk, SK: k.sk, ...gsi },
     }),
   );
+}
+
+export async function listLoansByGarage(garage_id: string): Promise<Loan[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": `TENANT#${garage_id}`,
+        ":sk": "LOAN#",
+      },
+    }),
+  );
+  return (r.Items ?? []) as Loan[];
 }
 
 export async function getLoan(garage_id: string, loan_id: string): Promise<Loan | undefined> {
