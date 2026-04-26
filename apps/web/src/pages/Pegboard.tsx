@@ -1,12 +1,15 @@
 import { useMemo, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import { AppShell } from "../components/AppShell";
+import { ComingSoonCard } from "../components/AI/ComingSoonCard";
 import { FilterBar } from "../components/Pegboard/FilterBar";
 import type { Filters } from "../components/Pegboard/FilterBar";
 import { PegboardGrid } from "../components/Pegboard/PegboardGrid";
 import { useGarageItems } from "../hooks/useGarageItems";
 import type { GarageItem } from "../hooks/useGarageItems";
+import { useGarageProfile } from "../hooks/useGarageProfile";
 import { usePullToRefresh } from "../hooks/usePullToRefresh";
+import { useMe } from "../lib/hooks/useMe";
 
 const INITIAL_FILTERS: Filters = {
   query: "",
@@ -46,6 +49,12 @@ function applyFilters(items: GarageItem[], filters: Filters): GarageItem[] {
 export default function Pegboard(): JSX.Element {
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
   const query = useGarageItems();
+  const me = useMe();
+  const garage = useGarageProfile();
+  // Family-only "Ask Dad's Garage" placeholder. Hidden once the owner flips
+  // ai_enabled — at that point this slot becomes the launcher for an actual
+  // chat input (deferred to v1.5).
+  const showAiCard = me.data?.tier === "family" && garage.data?.ai_enabled === false;
   const items = useMemo(() => query.data ?? [], [query.data]);
 
   const { pull, refreshing } = usePullToRefresh({
@@ -83,6 +92,12 @@ export default function Pegboard(): JSX.Element {
           <div className="mb-4">
             <FilterBar filters={filters} onChange={setFilters} categories={categories} />
           </div>
+
+          {showAiCard ? (
+            <div className="mb-4">
+              <ComingSoonCard />
+            </div>
+          ) : null}
 
           {query.isLoading ? (
             <div className="rounded-lg border border-workshop/10 dark:border-surface-light/10 p-8 text-center text-sm opacity-70">

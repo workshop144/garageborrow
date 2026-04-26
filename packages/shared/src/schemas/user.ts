@@ -11,6 +11,9 @@ export const NotificationPrefsSchema = z.object({
   waitlist_updates: z.boolean().default(true),
   new_tools: z.boolean().default(true),
   promotion_celebrations: z.boolean().default(true),
+  // When true, notify the user once the AI helper goes live in their garage.
+  // Borrower-facing toggle from the "Coming Soon" placeholder card.
+  ai_ready_notify: z.boolean().default(false),
   quiet_hours_start: HhMm.default("21:00"),
   quiet_hours_end: HhMm.default("08:00"),
 });

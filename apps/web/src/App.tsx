@@ -17,6 +17,7 @@ import Members from "./pages/Members";
 import ProfileSettings from "./pages/ProfileSettings";
 import NotificationsInbox from "./pages/NotificationsInbox";
 import Donate from "./pages/Donate";
+import MyDonations from "./pages/MyDonations";
 import PayItForward from "./pages/PayItForward";
 import OutRightNow from "./pages/admin/OutRightNow";
 import Inventory from "./pages/admin/Inventory";
@@ -116,6 +117,14 @@ export default function App(): JSX.Element {
                   element={
                     <ProtectedRoute>
                       <Donate />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/me/donations"
+                  element={
+                    <ProtectedRoute>
+                      <MyDonations />
                     </ProtectedRoute>
                   }
                 />

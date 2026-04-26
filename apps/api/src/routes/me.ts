@@ -14,6 +14,7 @@ import {
   getNotification,
   getUser,
   getUserAnyGarage,
+  listDonations,
   listNotifications,
   putMembership,
   putNotification,
@@ -185,6 +186,25 @@ meRoutes.post("/v1/me/notifications/:id/read", async (c) => {
   const updated = { ...existing, read_at: nowIso() };
   await putNotification(updated);
   return c.json({ notification: updated });
+});
+
+// GET /v1/me/donations — cross-garage list of donations the caller has
+// offered, sorted desc by created_at, opaque cursor pagination.
+meRoutes.get("/v1/me/donations", async (c) => {
+  const user = mustUser(c);
+  const params = parsePageParams(c);
+  const primary = await getUserAnyGarage(user.phone);
+  if (!primary) throw new ApiError("not_found", "User not found");
+  const all = [];
+  for (const garageId of primary.garages_member_of) {
+    const garageDonations = await listDonations(garageId);
+    for (const d of garageDonations) {
+      if (d.donor_phone === user.phone) all.push(d);
+    }
+  }
+  all.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const { page, next_cursor } = paginate(all, params);
+  return c.json(next_cursor ? { donations: page, next_cursor } : { donations: page });
 });
 
 meRoutes.post("/v1/me/notifications/read-all", async (c) => {

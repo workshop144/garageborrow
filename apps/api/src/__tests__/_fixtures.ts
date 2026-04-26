@@ -58,6 +58,7 @@ export function seedUser(phone: string, overrides: Partial<User> = {}): User {
       waitlist_updates: true,
       new_tools: true,
       promotion_celebrations: true,
+      ai_ready_notify: false,
       quiet_hours_start: "21:00",
       quiet_hours_end: "08:00",
     },
