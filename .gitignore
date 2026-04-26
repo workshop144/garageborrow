@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+.env
+.env.*
+!.env.example
+.aws-sam/
+.cdk.staging/
+.DS_Store
+*.log
+.vscode/
+.idea/
+coverage/
+.turbo/
