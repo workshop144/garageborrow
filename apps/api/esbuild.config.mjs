@@ -2,13 +2,11 @@ import { build, context } from "esbuild";
 
 const watch = process.argv.includes("--watch");
 
-const options = {
-  entryPoints: ["src/index.ts"],
+const common = {
   bundle: true,
   platform: "node",
   target: "node20",
   format: "esm",
-  outfile: "dist/index.js",
   sourcemap: true,
   minify: !watch,
   external: ["@aws-sdk/*"],
@@ -18,10 +16,26 @@ const options = {
   logLevel: "info",
 };
 
+const targets = [
+  { entryPoints: ["src/index.ts"], outfile: "dist/index.js" },
+  {
+    entryPoints: ["src/cognito-triggers/define-auth-challenge.ts"],
+    outfile: "dist/define-auth-challenge.mjs",
+  },
+  {
+    entryPoints: ["src/cognito-triggers/create-auth-challenge.ts"],
+    outfile: "dist/create-auth-challenge.mjs",
+  },
+  {
+    entryPoints: ["src/cognito-triggers/verify-auth-challenge.ts"],
+    outfile: "dist/verify-auth-challenge.mjs",
+  },
+];
+
 if (watch) {
-  const ctx = await context(options);
-  await ctx.watch();
+  const ctxs = await Promise.all(targets.map((t) => context({ ...common, ...t })));
+  await Promise.all(ctxs.map((c) => c.watch()));
   console.log("esbuild watching...");
 } else {
-  await build(options);
+  await Promise.all(targets.map((t) => build({ ...common, ...t })));
 }

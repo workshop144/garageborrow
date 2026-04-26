@@ -159,6 +159,89 @@ Resources:
       SmsConfiguration:
         SnsCallerArn: !GetAtt CognitoSmsRole.Arn
         ExternalId: !Sub garageborrow-${Stage}-external-id
+      LambdaConfig:
+        DefineAuthChallenge: !GetAtt DefineAuthChallengeFunction.Arn
+        CreateAuthChallenge: !GetAtt CreateAuthChallengeFunction.Arn
+        VerifyAuthChallengeResponse: !GetAtt VerifyAuthChallengeFunction.Arn
+
+  # ─────────────────── Cognito custom-auth Lambda triggers ───────────────────
+  # These three triggers implement phone-OTP-as-password sign-in. Without them
+  # the User Pool's ALLOW_CUSTOM_AUTH flow returns InvalidLambdaResponseException
+  # on every signin attempt. CreateAuth sends the SMS via SNS; the api Lambda's
+  # role already has sns:Publish for resends.
+  DefineAuthChallengeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub garageborrow-define-auth-${Stage}
+      CodeUri: ../apps/api/
+      Handler: dist/define-auth-challenge.handler
+      MemorySize: 256
+      Timeout: 5
+
+  DefineAuthChallengeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DefineAuthChallengeFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  DefineAuthChallengeFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/garageborrow-define-auth-${Stage}
+      RetentionInDays: !Ref LogRetentionDays
+
+  CreateAuthChallengeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub garageborrow-create-auth-${Stage}
+      CodeUri: ../apps/api/
+      Handler: dist/create-auth-challenge.handler
+      MemorySize: 256
+      Timeout: 10
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: "*"
+
+  CreateAuthChallengeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CreateAuthChallengeFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  CreateAuthChallengeFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/garageborrow-create-auth-${Stage}
+      RetentionInDays: !Ref LogRetentionDays
+
+  VerifyAuthChallengeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub garageborrow-verify-auth-${Stage}
+      CodeUri: ../apps/api/
+      Handler: dist/verify-auth-challenge.handler
+      MemorySize: 256
+      Timeout: 5
+
+  VerifyAuthChallengeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt VerifyAuthChallengeFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  VerifyAuthChallengeFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/garageborrow-verify-auth-${Stage}
+      RetentionInDays: !Ref LogRetentionDays
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
