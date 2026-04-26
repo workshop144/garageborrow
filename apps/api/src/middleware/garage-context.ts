@@ -34,6 +34,7 @@ export function loadGarageContext(): MiddlewareHandler<AppEnv> {
         no_shows: 0,
         ai_tokens_used_this_month: 0,
         ai_tokens_used_total: 0,
+        celebration_pending: false,
       };
     }
     c.set("membership", membership);

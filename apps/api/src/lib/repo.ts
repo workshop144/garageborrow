@@ -10,6 +10,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
+  auditLogKey,
   donationKey,
   gsi1LoanByUser,
   gsi1ReservationByUser,
@@ -26,6 +27,7 @@ import {
   waitlistKey,
 } from "@garageborrow/shared";
 import type {
+  AuditLogEntry,
   DonationOffer,
   Garage,
   GarageMembership,
@@ -365,6 +367,48 @@ export async function getDonation(
 export async function putIncident(i: IncidentReport): Promise<void> {
   const k = incidentKey(i.garage_id, i.created_at.slice(0, 10), i.id);
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, i) }));
+}
+
+export async function listIncidents(garage_id: string): Promise<IncidentReport[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": `TENANT#${garage_id}`,
+        ":sk": "INCIDENT#",
+      },
+    }),
+  );
+  return (r.Items ?? []) as IncidentReport[];
+}
+
+export async function getIncident(
+  garage_id: string,
+  incident_id: string,
+): Promise<IncidentReport | undefined> {
+  return (await listIncidents(garage_id)).find((i) => i.id === incident_id);
+}
+
+// ─────────────────────────── Audit log ────────────────────────
+
+export async function putAuditLogEntry(entry: AuditLogEntry): Promise<void> {
+  const k = auditLogKey(entry.garage_id, entry.date, entry.id);
+  await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, entry) }));
+}
+
+export async function listAuditLogEntries(garage_id: string): Promise<AuditLogEntry[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": `TENANT#${garage_id}`,
+        ":sk": "AUDIT#",
+      },
+    }),
+  );
+  return (r.Items ?? []) as AuditLogEntry[];
 }
 
 // ─────────────────────────── Notifications & Push ─────────────

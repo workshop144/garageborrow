@@ -18,6 +18,7 @@ export type NotifierEventType =
   | "loan_extended"
   | "loan_returned"
   | "loan_disputed"
+  | "loan_reminder"
   | "reservation_decided"
   | "incident_logged";
 

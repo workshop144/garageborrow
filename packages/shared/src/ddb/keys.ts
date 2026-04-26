@@ -128,6 +128,16 @@ export function aiInteractionKey(garage_id: string, date: string, interaction_id
   };
 }
 
+export function auditLogKey(garage_id: string, date: string, audit_id: string): DdbKey {
+  assertNoHash("garage_id", garage_id);
+  assertNoHash("date", date);
+  assertNoHash("audit_id", audit_id);
+  return {
+    pk: `TENANT#${garage_id}`,
+    sk: `AUDIT#${date}#${audit_id}`,
+  };
+}
+
 export function notificationKey(phone: string, ts: string, notification_id: string): DdbKey {
   assertNoHash("phone", phone);
   assertNoHash("ts", ts);
@@ -221,6 +231,7 @@ export type ParsedKey =
       date: string;
       interaction_id: string;
     }
+  | { kind: "audit_log"; garage_id: string; date: string; audit_id: string }
   | {
       kind: "notification";
       phone: string;
@@ -361,6 +372,17 @@ function parseTenantSk(garage_id: string, sk: string): ParsedKey {
         garage_id,
         date: parts[1],
         interaction_id: parts[2],
+      };
+    }
+    case "AUDIT": {
+      if (parts.length !== 3 || !parts[1] || !parts[2]) {
+        throw new KeyParseError(`Invalid AUDIT SK: ${sk}`);
+      }
+      return {
+        kind: "audit_log",
+        garage_id,
+        date: parts[1],
+        audit_id: parts[2],
       };
     }
     default:

@@ -93,6 +93,7 @@ export function seedMembership(
     no_shows: 0,
     ai_tokens_used_this_month: 0,
     ai_tokens_used_total: 0,
+    celebration_pending: false,
     ...overrides,
   };
   const k = tenantMemberKey(GARAGE_ID, phone);

@@ -16,6 +16,11 @@ export const GarageMembershipSchema = z.object({
   ai_tokens_used_total: NonNegInt.default(0),
   ai_budget_override_tokens: NonNegInt.optional(),
   notes: z.string().optional(),
+  // Set to true when the owner promotes the member to "family" tier from any
+  // lower tier. The /v1/me endpoint surfaces it once and immediately stamps
+  // celebration_seen_at so the celebration UI fires exactly one time.
+  celebration_pending: z.boolean().default(false),
+  celebration_seen_at: IsoDateTime.optional(),
 });
 
 export type GarageMembership = z.infer<typeof GarageMembershipSchema>;

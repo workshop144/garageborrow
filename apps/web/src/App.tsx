@@ -18,7 +18,14 @@ import ProfileSettings from "./pages/ProfileSettings";
 import NotificationsInbox from "./pages/NotificationsInbox";
 import Donate from "./pages/Donate";
 import PayItForward from "./pages/PayItForward";
-import Admin from "./pages/Admin";
+import OutRightNow from "./pages/admin/OutRightNow";
+import Inventory from "./pages/admin/Inventory";
+import MembersAdmin from "./pages/admin/MembersAdmin";
+import Donations from "./pages/admin/Donations";
+import Incidents from "./pages/admin/Incidents";
+import Activity from "./pages/admin/Activity";
+import Settings from "./pages/admin/Settings";
+import { AdminGuard } from "./components/Admin/AdminGuard";
 import LegalTerms from "./pages/LegalTerms";
 import LegalPrivacy from "./pages/LegalPrivacy";
 import Offline from "./pages/Offline";
@@ -124,7 +131,69 @@ export default function App(): JSX.Element {
                   path="/admin"
                   element={
                     <ProtectedRoute>
-                      <Admin />
+                      <AdminGuard>
+                        <OutRightNow />
+                      </AdminGuard>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/items"
+                  element={
+                    <ProtectedRoute>
+                      <AdminGuard>
+                        <Inventory />
+                      </AdminGuard>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/members"
+                  element={
+                    <ProtectedRoute>
+                      <AdminGuard>
+                        <MembersAdmin />
+                      </AdminGuard>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/donations"
+                  element={
+                    <ProtectedRoute>
+                      <AdminGuard>
+                        <Donations />
+                      </AdminGuard>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/incidents"
+                  element={
+                    <ProtectedRoute>
+                      <AdminGuard>
+                        <Incidents />
+                      </AdminGuard>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/activity"
+                  element={
+                    <ProtectedRoute>
+                      <AdminGuard>
+                        <Activity />
+                      </AdminGuard>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/settings"
+                  element={
+                    <ProtectedRoute>
+                      <AdminGuard>
+                        <Settings />
+                      </AdminGuard>
                     </ProtectedRoute>
                   }
                 />

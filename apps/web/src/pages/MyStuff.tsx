@@ -91,7 +91,7 @@ export default function MyStuff(): JSX.Element {
 
       <FamilyPromotionOverlay
         userKey={username ?? ""}
-        shouldCelebrate={me.data?.tier === "family"}
+        shouldCelebrate={me.data?.celebrationPending ?? false}
       />
     </AppShell>
   );

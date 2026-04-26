@@ -10,6 +10,7 @@ import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import { getDonation, listDonations, putDonation, putItem } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
+import { audit, setAuditDetails } from "../middleware/audit.js";
 import { requireAuth } from "../middleware/auth.js";
 import { loadGarageContext } from "../middleware/garage-context.js";
 import { idempotency } from "../middleware/idempotency.js";
@@ -66,9 +67,10 @@ donationRoutes.get("/v1/g/:garage/donations/mine", async (c) => {
   return c.json(next_cursor ? { donations: page, next_cursor } : { donations: page });
 });
 
-// Owner-only:
-donationRoutes.use("/v1/g/:garage/admin/donations", requireAuth(), ownerOnly());
-donationRoutes.use("/v1/g/:garage/admin/donations/*", requireAuth(), ownerOnly());
+// Owner-only — every admin/donations mutation also passes through the audit
+// middleware so accept/decline decisions land in the activity log.
+donationRoutes.use("/v1/g/:garage/admin/donations", requireAuth(), ownerOnly(), audit());
+donationRoutes.use("/v1/g/:garage/admin/donations/*", requireAuth(), ownerOnly(), audit());
 
 donationRoutes.get("/v1/g/:garage/admin/donations", async (c) => {
   const garage = mustGarage(c);
@@ -123,6 +125,13 @@ donationRoutes.post("/v1/g/:garage/admin/donations/:id/decide", async (c) => {
       decided_by_phone: user.phone,
     };
     await putDonation(updated);
+    setAuditDetails(c, {
+      action_type: "donation.declined",
+      entity_type: "donation",
+      entity_id: offer.id,
+      before_snapshot: offer,
+      after_snapshot: updated,
+    });
     await invokeNotifier({
       type: "donation_declined",
       garage_id: garage.id,
@@ -159,6 +168,13 @@ donationRoutes.post("/v1/g/:garage/admin/donations/:id/decide", async (c) => {
     resulting_item_id: item.id,
   };
   await putDonation(updated);
+  setAuditDetails(c, {
+    action_type: "donation.accepted",
+    entity_type: "donation",
+    entity_id: offer.id,
+    before_snapshot: offer,
+    after_snapshot: { donation: updated, item },
+  });
   await invokeNotifier({
     type: "donation_accepted",
     garage_id: garage.id,

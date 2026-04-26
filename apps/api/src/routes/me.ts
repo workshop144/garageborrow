@@ -2,18 +2,20 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { NotificationPrefsSchema, UserVisibilitySchema } from "@garageborrow/shared";
-import type { GarageMembership, User } from "@garageborrow/shared";
+import type { GarageMembership, TierName, User } from "@garageborrow/shared";
 
 import { mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import {
+  getGarage,
   getMembership,
   getNotification,
   getUser,
   getUserAnyGarage,
   listNotifications,
+  putMembership,
   putNotification,
   putPushSubscription,
   putUser,
@@ -27,16 +29,63 @@ export const meRoutes = new Hono<AppEnv>();
 
 meRoutes.use("*", requireAuth());
 
+const TIER_RANK: Record<TierName, number> = { howdy: 0, friend: 1, family: 2 };
+
 meRoutes.get("/v1/me", async (c) => {
   const user = mustUser(c);
   const primary = await getUserAnyGarage(user.phone);
   if (!primary) throw new ApiError("not_found", "User not found");
+
   const memberships: GarageMembership[] = [];
+  const owned: string[] = [];
+  let celebrationPending = false;
+  const ts = nowIso();
+
   for (const garageId of primary.garages_member_of) {
     const m = await getMembership(garageId, user.phone);
     if (m) memberships.push(m);
+    const g = await getGarage(garageId);
+    if (g && g.owner_phone === user.phone) owned.push(garageId);
   }
-  return c.json({ user: primary, memberships });
+
+  // Consume celebration_pending the first time /me is read after the owner
+  // promoted the user to family. We mark celebration_seen_at on the same
+  // membership so a follow-up /me read returns the flag as false.
+  for (const m of memberships) {
+    if (m.celebration_pending) {
+      celebrationPending = true;
+      const cleared: GarageMembership = {
+        ...m,
+        celebration_pending: false,
+        celebration_seen_at: ts,
+      };
+      await putMembership(cleared);
+      // Mutate in place so the response reflects the cleared state too.
+      m.celebration_pending = false;
+      m.celebration_seen_at = ts;
+    }
+  }
+
+  // Top-level tier: "owner" if they own any garage, otherwise the highest
+  // membership tier across their garages, defaulting to "howdy".
+  let topTier: TierName | "owner" = "howdy";
+  if (owned.length > 0) {
+    topTier = "owner";
+  } else {
+    let best: TierName = "howdy";
+    for (const m of memberships) {
+      if (TIER_RANK[m.tier] > TIER_RANK[best]) best = m.tier;
+    }
+    topTier = best;
+  }
+
+  return c.json({
+    user: primary,
+    memberships,
+    owned_garages: owned,
+    tier: topTier,
+    celebration_pending: celebrationPending,
+  });
 });
 
 const PatchMeSchema = z

@@ -13,3 +13,4 @@ export * from "./incident-report.js";
 export * from "./notification.js";
 export * from "./push-subscription.js";
 export * from "./ai-interaction.js";
+export * from "./audit-log-entry.js";
