@@ -1,3 +1,7 @@
+@import "@fontsource/permanent-marker/400.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -5,8 +9,28 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    color-scheme: light dark;
   }
   body {
-    @apply font-body antialiased;
+    @apply font-body antialiased bg-surface-light text-workshop dark:bg-surface-dark dark:text-surface-light;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-heading;
+  }
+}
+
+@layer utilities {
+  .bg-wood {
+    background-image: url("/src/assets/wood-grain.svg");
+    background-repeat: repeat;
+  }
+  .dark .bg-wood {
+    background-image: url("/src/assets/wood-grain-dark.svg");
+  }
+  .bg-pegboard {
+    background-image: url("/src/assets/pegboard-dots.svg");
+    background-repeat: repeat;
   }
 }

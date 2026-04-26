@@ -2,7 +2,7 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: ["./index.html", "./src/**/*.{ts,tsx}", "../../packages/ui/src/**/*.{ts,tsx}"],
-  darkMode: "media",
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
@@ -11,7 +11,10 @@ const config: Config = {
           accent: "#DAAF35",
           bright: "#E8B833",
         },
-        workshop: "#1A1A1A",
+        workshop: {
+          DEFAULT: "#1A1A1A",
+          dark: "#0F0F0F",
+        },
         surface: {
           light: "#FAF7F0",
           dark: "#2A2018",
@@ -29,8 +32,13 @@ const config: Config = {
       },
       fontFamily: {
         heading: ['"Permanent Marker"', "cursive"],
-        body: ["Inter", "system-ui", "sans-serif"],
-        mono: ['"JetBrains Mono"', "monospace"],
+        body: ['"Inter Variable"', "Inter", "system-ui", "sans-serif"],
+        mono: ['"JetBrains Mono Variable"', '"JetBrains Mono"', "monospace"],
+      },
+      backgroundImage: {
+        "wood-grain-light": "url('/src/assets/wood-grain.svg')",
+        "wood-grain-dark": "url('/src/assets/wood-grain-dark.svg')",
+        "pegboard-dots": "url('/src/assets/pegboard-dots.svg')",
       },
     },
   },
