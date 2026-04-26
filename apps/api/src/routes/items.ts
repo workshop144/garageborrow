@@ -19,6 +19,7 @@ import {
   putItem,
   putWaitlist,
 } from "../lib/repo.js";
+import type { WaitlistEntry } from "@garageborrow/shared";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
 import { loadGarageContext } from "../middleware/garage-context.js";
@@ -155,15 +156,17 @@ itemRoutes.get("/v1/g/:garage/items", async (c) => {
 itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {
   const garage = mustGarage(c);
   const membership = mustMembership(c);
+  const user = mustUser(c);
   const itemId = c.req.param("id");
   if (!itemId) throw new ApiError("bad_request", "Missing item id");
   const item = await getItem(garage.id, itemId);
   if (!item) throw new ApiError("not_found", "Item not found");
   const access = resolveItemAccess(membership.tier, item.min_tier, item.auto_approve_tier);
   if (access === "hidden") throw new ApiError("not_found", "Item not found");
-  const [instances, allLoans] = await Promise.all([
+  const [instances, allLoans, waitlist] = await Promise.all([
     listInstances(garage.id, itemId),
     listLoansByGarage(garage.id),
+    listWaitlist(garage.id, itemId),
   ]);
   const itemLoans = allLoans.filter((l) => l.item_id === itemId);
   const counts = computeItemCounts(instances, itemLoans);
@@ -172,11 +175,20 @@ itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {
   if (item.status === "maintenance") statusPills.push("In maintenance");
   if (item.status === "all_loaned") statusPills.push("All loaned out");
   if (item.status === "partial_loaned") statusPills.push("Partial");
+  // Waitlist position is recomputed on read (joined_at order) so it stays
+  // accurate even when entries are deleted out of order without a renumber.
+  const ordered = [...waitlist].sort((a: WaitlistEntry, b: WaitlistEntry) =>
+    a.joined_at.localeCompare(b.joined_at),
+  );
+  const myIdx = ordered.findIndex((w) => w.borrower_phone === user.phone);
+  const myEntry = myIdx >= 0 ? ordered[myIdx] : undefined;
   return c.json({
     item: { ...item, access, ...counts },
     instances,
     status_pills: statusPills,
     handling_notes: item.handling_notes ?? "",
+    waitlist_size: ordered.length,
+    my_waitlist_entry: myEntry ? { id: myEntry.id, position: myIdx + 1 } : null,
   });
 });
 
