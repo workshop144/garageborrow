@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Garage Borrow backend (placeholder — fleshed out in a later prompt).
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures:
+      - arm64
+    MemorySize: 512
+    Timeout: 10
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+
+Resources:
+  PlaceholderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub garageborrow-placeholder-${Stage}
+      CodeUri: ../apps/api/dist/
+      Handler: index.handler
+
+Outputs:
+  Stage:
+    Value: !Ref Stage

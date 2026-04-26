@@ -1,5 +1,6 @@
 node_modules/
 dist/
+build/
 .next/
 .env
 .env.*
@@ -12,3 +13,7 @@ dist/
 .idea/
 coverage/
 .turbo/
+.pnpm-store/
+pnpm-debug.log*
+*.tsbuildinfo
+.cache/
