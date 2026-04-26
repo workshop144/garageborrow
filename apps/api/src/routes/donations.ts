@@ -7,6 +7,7 @@ import { mustGarage, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
+import { paginate, parsePageParams } from "../lib/pagination.js";
 import { getDonation, listDonations, putDonation, putItem } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -56,9 +57,13 @@ donationRoutes.post("/v1/g/:garage/donations", async (c) => {
 donationRoutes.get("/v1/g/:garage/donations/mine", async (c) => {
   const garage = mustGarage(c);
   const user = mustUser(c);
+  const params = parsePageParams(c);
   const all = await listDonations(garage.id);
-  const mine = all.filter((d) => d.donor_phone === user.phone);
-  return c.json({ donations: mine });
+  const mine = all
+    .filter((d) => d.donor_phone === user.phone)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const { page, next_cursor } = paginate(mine, params);
+  return c.json(next_cursor ? { donations: page, next_cursor } : { donations: page });
 });
 
 // Owner-only:
@@ -67,8 +72,11 @@ donationRoutes.use("/v1/g/:garage/admin/donations/*", requireAuth(), ownerOnly()
 
 donationRoutes.get("/v1/g/:garage/admin/donations", async (c) => {
   const garage = mustGarage(c);
+  const params = parsePageParams(c);
   const all = await listDonations(garage.id);
-  return c.json({ donations: all });
+  all.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const { page, next_cursor } = paginate(all, params);
+  return c.json(next_cursor ? { donations: page, next_cursor } : { donations: page });
 });
 
 const DecideSchema = z.discriminatedUnion("decision", [

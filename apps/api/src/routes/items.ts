@@ -7,6 +7,7 @@ import { z } from "zod";
 import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
+import { paginate, parsePageParams } from "../lib/pagination.js";
 import {
   getItem,
   listAllInstancesInGarage,
@@ -57,13 +58,27 @@ function sortEnrichedItems<T extends Item & ItemCounts>(items: T[], sort: ItemSo
       out.sort((a, b) => b.created_at.localeCompare(a.created_at));
       break;
     case "popular":
-      out.sort((a, b) => b.borrows_total - a.borrows_total);
+      // Tie-break by borrows_last_30d so a recent surge wins over equal totals.
+      out.sort(
+        (a, b) => b.borrows_total - a.borrows_total || b.borrows_last_30d - a.borrows_last_30d,
+      );
       break;
     case "alphabetical":
-      out.sort((a, b) => a.name.localeCompare(b.name));
+      out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
       break;
   }
   return out;
+}
+
+function matchesQuery(item: Item, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (needle === "") return true;
+  if (item.name.toLowerCase().includes(needle)) return true;
+  if (item.description.toLowerCase().includes(needle)) return true;
+  for (const tag of item.tags) {
+    if (tag.toLowerCase().includes(needle)) return true;
+  }
+  return false;
 }
 
 export const itemRoutes = new Hono<AppEnv>();
@@ -78,6 +93,12 @@ itemRoutes.use("/v1/g/:garage/incidents", requireAuth(), ownerOnly());
 // "Request" vs nothing. Each item is enriched with available_count /
 // total_count / borrows_total / borrows_last_30d so the UI doesn't have to
 // fan out a query per card.
+//
+// Search/filter/sort happen in-memory after the partition scan. At MVP
+// scale this is fine (tens of items per garage). Upgrade path: if any
+// garage exceeds ~200 items, add a search GSI keyed on category +
+// available state, or move full-text to OpenSearch and keep DDB for the
+// item record itself.
 itemRoutes.get("/v1/g/:garage/items", async (c) => {
   const garage = mustGarage(c);
   const membership = mustMembership(c);
@@ -86,6 +107,10 @@ itemRoutes.get("/v1/g/:garage/items", async (c) => {
   if (!parsedSort.success) {
     throw new ApiError("bad_request", "Invalid sort; expected recent|popular|alphabetical");
   }
+  const q = c.req.query("q") ?? "";
+  const category = c.req.query("category");
+  const availableNow = c.req.query("available_now") === "true";
+  const pageParams = parsePageParams(c);
 
   const [items, allInstances, allLoans] = await Promise.all([
     listItems(garage.id),
@@ -107,6 +132,11 @@ itemRoutes.get("/v1/g/:garage/items", async (c) => {
   }
 
   const visible = items
+    .filter((it) => matchesQuery(it, q))
+    .filter((it) => (category ? it.category === category : true))
+    .filter((it) =>
+      availableNow ? it.status === "available" || it.status === "partial_loaned" : true,
+    )
     .map((it) => {
       const access = resolveItemAccess(membership.tier, it.min_tier, it.auto_approve_tier);
       const counts = computeItemCounts(
@@ -117,7 +147,9 @@ itemRoutes.get("/v1/g/:garage/items", async (c) => {
     })
     .filter((it) => it.access !== "hidden");
 
-  return c.json({ items: sortEnrichedItems(visible, parsedSort.data) });
+  const sorted = sortEnrichedItems(visible, parsedSort.data);
+  const { page, next_cursor } = paginate(sorted, pageParams);
+  return c.json(next_cursor ? { items: page, next_cursor } : { items: page });
 });
 
 itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {

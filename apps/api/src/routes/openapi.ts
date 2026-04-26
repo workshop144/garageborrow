@@ -59,6 +59,18 @@ const PATHS: Record<string, Record<string, OpenApiPathItem>> = {
   "/v1/me/push-subscription": {
     post: { summary: "Register a web-push subscription", tags: ["me"] },
   },
+  "/v1/me/notifications": {
+    get: { summary: "List notifications (last 30 days, paginated)", tags: ["me"] },
+  },
+  "/v1/me/notifications/{id}/read": {
+    post: { summary: "Mark a notification as read", tags: ["me"] },
+  },
+  "/v1/me/notifications/read-all": {
+    post: { summary: "Mark all notifications as read", tags: ["me"] },
+  },
+  "/v1/auth/resend-otp": {
+    post: { summary: "Resend SMS OTP for unconfirmed signup (public)", tags: ["public"] },
+  },
   "/v1/g/{garage}": { get: { summary: "Garage profile", tags: ["garage"] } },
   "/v1/g/{garage}/items": {
     get: { summary: "List items (tier-filtered)", tags: ["items"] },

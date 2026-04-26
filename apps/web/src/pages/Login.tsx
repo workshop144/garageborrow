@@ -1,27 +1,61 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth/AuthContext";
+import { api, ApiError } from "../lib/api";
+import { formatAsYouType, toE164 } from "../lib/phone";
 
-const phoneRegex = /^\+\d{8,15}$/;
+const RESEND_COOLDOWN_SECONDS = 60;
 
 export default function Login(): JSX.Element {
   const { beginPhoneSignIn, submitOtp, status, signOut } = useAuth();
   const navigate = useNavigate();
-  const [phone, setPhone] = useState("");
+  const [phoneInput, setPhoneInput] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (resendCooldown > 0 && !tickRef.current) {
+      tickRef.current = setInterval(() => {
+        setResendCooldown((s) => {
+          if (s <= 1 && tickRef.current) {
+            clearInterval(tickRef.current);
+            tickRef.current = null;
+          }
+          return Math.max(0, s - 1);
+        });
+      }, 1000);
+    }
+    return () => {
+      if (tickRef.current) {
+        clearInterval(tickRef.current);
+        tickRef.current = null;
+      }
+    };
+  }, [resendCooldown]);
+
+  function startCooldown(seconds: number) {
+    setResendCooldown(seconds);
+    if (tickRef.current) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+  }
 
   async function onSendCode(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!phoneRegex.test(phone)) {
-      setError("Use E.164 format, like +13175550123.");
+    const e164 = toE164(phoneInput);
+    if (!e164) {
+      setError("Enter a valid US phone number, like (317) 555-1234.");
       return;
     }
     setBusy(true);
     try {
-      await beginPhoneSignIn(phone);
+      await beginPhoneSignIn(e164);
+      startCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't send the code.");
     } finally {
@@ -47,6 +81,34 @@ export default function Login(): JSX.Element {
     }
   }
 
+  async function onResend() {
+    setError(null);
+    const e164 = toE164(phoneInput);
+    if (!e164) {
+      setError("Phone number missing — start over.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.post<{ status: string; retry_after_seconds: number }>(
+        "/auth/resend-otp",
+        { phone: e164 },
+      );
+      startCooldown(res.retry_after_seconds || RESEND_COOLDOWN_SECONDS);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 429) {
+        const detail = err.details as { retry_after_seconds?: number } | undefined;
+        const retry = detail?.retry_after_seconds ?? RESEND_COOLDOWN_SECONDS;
+        startCooldown(retry);
+        setError(`Hold on — try again in ${retry}s.`);
+      } else {
+        setError(err instanceof Error ? err.message : "Couldn't resend the code.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-xl border border-workshop/10 dark:border-surface-light/10 bg-surface-light dark:bg-surface-dark p-6 shadow-sm">
@@ -56,13 +118,13 @@ export default function Login(): JSX.Element {
         {status !== "challenge" ? (
           <form onSubmit={onSendCode} className="mt-6 space-y-3">
             <label className="block text-sm font-medium">
-              Phone (E.164)
+              Phone
               <input
                 inputMode="tel"
                 autoComplete="tel"
-                placeholder="+13175550123"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value.trim())}
+                placeholder="(317) 555-1234"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(formatAsYouType(e.target.value))}
                 className="mt-1 w-full rounded-md border border-workshop/20 dark:border-surface-light/20 bg-transparent px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-gold-bright"
               />
             </label>
@@ -77,7 +139,7 @@ export default function Login(): JSX.Element {
         ) : (
           <form onSubmit={onVerify} className="mt-6 space-y-3">
             <p className="text-sm">
-              Code sent to <span className="font-mono">{phone}</span>.
+              Code sent to <span className="font-mono">{phoneInput}</span>.
             </p>
             <label className="block text-sm font-medium">
               6-digit code
@@ -100,9 +162,18 @@ export default function Login(): JSX.Element {
             </button>
             <button
               type="button"
+              onClick={onResend}
+              disabled={busy || resendCooldown > 0}
+              className="w-full text-sm opacity-80 hover:opacity-100 disabled:opacity-50"
+            >
+              {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 signOut();
                 setCode("");
+                startCooldown(0);
               }}
               className="w-full text-sm opacity-70 hover:opacity-100"
             >

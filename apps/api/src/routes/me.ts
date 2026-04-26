@@ -7,10 +7,14 @@ import type { GarageMembership, User } from "@garageborrow/shared";
 import { mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
+import { paginate, parsePageParams } from "../lib/pagination.js";
 import {
   getMembership,
+  getNotification,
   getUser,
   getUserAnyGarage,
+  listNotifications,
+  putNotification,
   putPushSubscription,
   putUser,
 } from "../lib/repo.js";
@@ -97,6 +101,54 @@ meRoutes.get("/v1/me/data-export", async (c) => {
     body: JSON.stringify(exportPayload, null, 2),
   });
   return c.json({ status: "queued" });
+});
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+// GET /v1/me/notifications — last 30 days, sorted desc by sent_at. Optional
+// ?unread=true|false filter, opaque cursor pagination.
+meRoutes.get("/v1/me/notifications", async (c) => {
+  const user = mustUser(c);
+  const params = parsePageParams(c);
+  const unreadRaw = c.req.query("unread");
+  const cutoff = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
+  const all = await listNotifications(user.phone);
+  let scoped = all.filter((n) => n.sent_at >= cutoff);
+  if (unreadRaw === "true") {
+    scoped = scoped.filter((n) => !n.read_at);
+  } else if (unreadRaw === "false") {
+    scoped = scoped.filter((n) => Boolean(n.read_at));
+  }
+  scoped.sort((a, b) => b.sent_at.localeCompare(a.sent_at));
+  const { page, next_cursor } = paginate(scoped, params);
+  return c.json(next_cursor ? { items: page, next_cursor } : { items: page });
+});
+
+meRoutes.post("/v1/me/notifications/:id/read", async (c) => {
+  const user = mustUser(c);
+  const id = c.req.param("id");
+  if (!id) throw new ApiError("bad_request", "Missing notification id");
+  const existing = await getNotification(user.phone, id);
+  if (!existing) throw new ApiError("not_found", "Notification not found");
+  if (existing.read_at) {
+    return c.json({ notification: existing });
+  }
+  const updated = { ...existing, read_at: nowIso() };
+  await putNotification(updated);
+  return c.json({ notification: updated });
+});
+
+meRoutes.post("/v1/me/notifications/read-all", async (c) => {
+  const user = mustUser(c);
+  const all = await listNotifications(user.phone);
+  const ts = nowIso();
+  let count = 0;
+  for (const n of all) {
+    if (n.read_at) continue;
+    await putNotification({ ...n, read_at: ts });
+    count += 1;
+  }
+  return c.json({ marked_read: count });
 });
 
 const PushSubSchema = z.object({

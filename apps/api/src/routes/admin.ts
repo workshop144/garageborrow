@@ -11,6 +11,7 @@ import { z } from "zod";
 import { mustGarage } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { invokeNotifier } from "../lib/invoke.js";
+import { paginate, parsePageParams } from "../lib/pagination.js";
 import { getMembership, listMembers, putGarage, putMembership } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -26,8 +27,12 @@ adminRoutes.use("/v1/g/:garage/admin/settings", requireAuth(), ownerOnly());
 
 adminRoutes.get("/v1/g/:garage/admin/members", async (c) => {
   const garage = mustGarage(c);
-  const members = await listMembers(garage.id);
-  return c.json({ members });
+  const params = parsePageParams(c);
+  const all = await listMembers(garage.id);
+  // Stable sort so cursors paginate the same view across calls.
+  all.sort((a, b) => a.user_phone.localeCompare(b.user_phone));
+  const { page, next_cursor } = paginate(all, params);
+  return c.json(next_cursor ? { members: page, next_cursor } : { members: page });
 });
 
 const MemberPatchSchema = z

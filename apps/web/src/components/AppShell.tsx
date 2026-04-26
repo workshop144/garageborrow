@@ -10,7 +10,7 @@ type Props = {
 export function AppShell({ children, fullBleed = false }: Props): JSX.Element {
   return (
     <div className="min-h-screen flex flex-col bg-surface-light dark:bg-surface-dark text-workshop dark:text-surface-light">
-      <header className="sticky top-0 z-10 border-b border-workshop/10 dark:border-surface-light/10 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-workshop/10 dark:border-surface-light/10 bg-surface-light/90 dark:bg-surface-dark/90 backdrop-blur pt-[env(safe-area-inset-top)]">
         <div className="mx-auto max-w-3xl px-4 py-3 flex items-center justify-between">
           <Link to="/" className="font-heading text-2xl text-gold-bright">
             Garage

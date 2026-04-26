@@ -1,0 +1,88 @@
+// Centralized date formatting. The server stores UTC ISO strings; the UI
+// always renders in America/New_York (the garage's home zone).
+// Keep all UI date code going through these helpers so DST edge cases and
+// timezone conversions stay in one place.
+
+import {
+  format,
+  formatDistanceToNowStrict,
+  isToday,
+  isTomorrow,
+  isYesterday,
+  parseISO,
+} from "date-fns";
+import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
+
+export const APP_TIMEZONE = "America/New_York";
+
+function asDate(input: Date | string): Date {
+  return typeof input === "string" ? parseISO(input) : input;
+}
+
+// "since Tuesday", "due ~Sat", "2 days ago", "in 3 hours". Tuned for borrow
+// timelines: relative phrasing in the same week, weekday name beyond that.
+export function formatRelative(input: Date | string, now: Date = new Date()): string {
+  const d = asDate(input);
+  const ms = d.getTime() - now.getTime();
+  const absMs = Math.abs(ms);
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (absMs < minute) {
+    return ms >= 0 ? "in moments" : "just now";
+  }
+  if (isToday(d)) {
+    return ms >= 0 ? `in ${formatDistanceToNowStrict(d)}` : `${formatDistanceToNowStrict(d)} ago`;
+  }
+  if (isTomorrow(d)) return "tomorrow";
+  if (isYesterday(d)) return "yesterday";
+  if (absMs < 7 * day) {
+    const weekday = formatInTimeZone(d, APP_TIMEZONE, "EEEE");
+    return ms >= 0 ? `~${weekday}` : `since ${weekday}`;
+  }
+  return formatInTimeZone(d, APP_TIMEZONE, "MMM d, yyyy");
+}
+
+// Date-picker display, e.g. "Apr 26, 2026".
+export function formatDateInput(input: Date | string): string {
+  return formatInTimeZone(asDate(input), APP_TIMEZONE, "MMM d, yyyy");
+}
+
+// Wall-clock time in New York, e.g. "9:30 AM".
+export function formatTime(input: Date | string): string {
+  return formatInTimeZone(asDate(input), APP_TIMEZONE, "h:mm a");
+}
+
+// Parse a free-form date string (yyyy-MM-dd or anything Date can read) into
+// a Date interpreted in the local browser zone — caller is responsible for
+// converting to UTC before sending to the server (use `fromIndianapolis`).
+export function parseInputDate(input: string): Date {
+  // ISO date-only strings (yyyy-MM-dd) parse as UTC midnight under the
+  // standard, which would shift the day in some zones. parseISO + locale
+  // adjust is fine for picker UX; explicit zone conversion happens at
+  // submit time.
+  return parseISO(input);
+}
+
+// UTC ISO → Date positioned at the same wall-clock as New York. Useful
+// when feeding values into widgets that expect a "local" Date.
+export function toIndianapolis(utcDate: Date | string): Date {
+  return toZonedTime(asDate(utcDate), APP_TIMEZONE);
+}
+
+// Inverse: a Date that represents an New York wall-clock moment, back
+// to its true UTC ISO string for the server.
+export function fromIndianapolis(zonedDate: Date): string {
+  return fromZonedTime(zonedDate, APP_TIMEZONE).toISOString();
+}
+
+// Convenience for date-only formatting in the app zone using a custom
+// pattern (e.g. for chart axes). Prefer one of the named helpers above
+// when possible.
+export function formatInAppZone(input: Date | string, pattern: string): string {
+  return formatInTimeZone(asDate(input), APP_TIMEZONE, pattern);
+}
+
+// Used by tests to avoid pulling in date-fns directly.
+export { format };

@@ -4,6 +4,7 @@ import { handle } from "hono/aws-lambda";
 import { env } from "./lib/env.js";
 import { errorBoundary, onError } from "./middleware/error.js";
 import { adminRoutes } from "./routes/admin.js";
+import { authRoutes } from "./routes/auth.js";
 import { donationRoutes } from "./routes/donations.js";
 import { garageRoutes } from "./routes/garage.js";
 import { itemRoutes } from "./routes/items.js";
@@ -32,6 +33,7 @@ export function createApp(): Hono<AppEnv> {
   );
 
   app.route("/", openapiRoutes);
+  app.route("/", authRoutes);
   app.route("/", meRoutes);
   app.route("/", garageRoutes);
   app.route("/", itemRoutes);

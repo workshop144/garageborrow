@@ -374,7 +374,75 @@ export async function putNotification(n: Notification): Promise<void> {
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, n) }));
 }
 
+export async function listNotifications(phone: string): Promise<Notification[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": `USER#${phone}`,
+        ":sk": "NOTIFICATION#",
+      },
+    }),
+  );
+  return (r.Items ?? []) as Notification[];
+}
+
+export async function getNotification(
+  phone: string,
+  notification_id: string,
+): Promise<Notification | undefined> {
+  // Notifications are scattered across NOTIFICATION#<ts>#<id>; we don't
+  // know the ts here, so query the user partition and filter. Volume is
+  // low (per-user, capped to 30 days by the inbox endpoint).
+  const all = await listNotifications(phone);
+  return all.find((n) => n.id === notification_id);
+}
+
 export async function putPushSubscription(p: PushSubscription, hash: string): Promise<void> {
   const k = pushSubscriptionKey(p.user_phone, hash);
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, p) }));
+}
+
+// ─────────────────────────── Rate limit ───────────────────────
+//
+// Generic per-key rate-limit record with a TTL. Used by /v1/auth/resend-otp
+// to gate per-phone resends to one-per-60s before hitting Cognito.
+
+interface RateLimitRecord {
+  PK: string;
+  SK: string;
+  expires_at: number;
+}
+
+function rateLimitKey(bucket: string, key: string): { pk: string; sk: string } {
+  return { pk: `RATELIMIT#${bucket}`, sk: key };
+}
+
+export async function getRateLimit(
+  bucket: string,
+  key: string,
+  nowEpochSec: number,
+): Promise<{ retry_after_seconds: number } | undefined> {
+  const k = rateLimitKey(bucket, key);
+  const r = await ddb().send(new GetCommand({ TableName: table(), Key: { PK: k.pk, SK: k.sk } }));
+  const item = r.Item as RateLimitRecord | undefined;
+  if (!item || typeof item.expires_at !== "number") return undefined;
+  if (item.expires_at <= nowEpochSec) return undefined;
+  return { retry_after_seconds: item.expires_at - nowEpochSec };
+}
+
+export async function putRateLimit(
+  bucket: string,
+  key: string,
+  ttlSeconds: number,
+  nowEpochSec: number,
+): Promise<void> {
+  const k = rateLimitKey(bucket, key);
+  await ddb().send(
+    new PutCommand({
+      TableName: table(),
+      Item: { PK: k.pk, SK: k.sk, expires_at: nowEpochSec + ttlSeconds },
+    }),
+  );
 }

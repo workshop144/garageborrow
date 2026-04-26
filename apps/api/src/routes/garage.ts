@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 
 import { mustGarage, mustMembership } from "../lib/ctx.js";
+import { paginate, parsePageParams } from "../lib/pagination.js";
 import { listMembers, getUser } from "../lib/repo.js";
 import { resolveItemAccess } from "@garageborrow/shared";
 import type { AppEnv } from "../lib/types.js";
@@ -43,7 +44,9 @@ garageRoutes.get("/v1/g/:garage", async (c) => {
 
 garageRoutes.get("/v1/g/:garage/members", async (c) => {
   const garage = mustGarage(c);
+  const params = parsePageParams(c);
   const memberships = await listMembers(garage.id);
+  memberships.sort((a, b) => a.user_phone.localeCompare(b.user_phone));
   const out: Array<{ phone_last4: string; display_name: string; joined_at: string }> = [];
   for (const m of memberships) {
     const u = await getUser(garage.id, m.user_phone);
@@ -54,7 +57,8 @@ garageRoutes.get("/v1/g/:garage/members", async (c) => {
       joined_at: m.joined_at,
     });
   }
-  return c.json({ members: out });
+  const { page, next_cursor } = paginate(out, params);
+  return c.json(next_cursor ? { members: page, next_cursor } : { members: page });
 });
 
 // Re-export the helper so other routes can compute access without importing
