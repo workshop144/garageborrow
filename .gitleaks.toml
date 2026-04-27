@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented example secrets used in repo hardening verification steps"
+regexes = [
+  '''AKIA1234567890ABCDEF''',
+]
+paths = [
+  '''docs/deploy\.md''',
+]

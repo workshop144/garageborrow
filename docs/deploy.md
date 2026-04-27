@@ -167,3 +167,107 @@ git push origin v1.0.0
 ```
 
 Then post `docs/launch-post.md` and tell people about your garage.
+
+---
+
+## Repo hardening (one-time, before first deploy)
+
+Garage Borrow lives in a public repository. The following steps make
+that safe by ensuring no static AWS credentials live in GitHub secrets
+and no accidental secret commits land on `main`.
+
+### Required
+
+1. **Branch protection on `main`**
+   Settings → Branches → Add branch ruleset for `main`:
+   - Require pull request before merging (1 approval; for solo work,
+     enable "Allow specified actors to bypass" with just yourself)
+   - Require status checks to pass: `ci`, `Security Review`
+   - Require branches to be up to date before merging
+   - Restrict pushes that create matching branches: yes
+   - Block force pushes: yes
+
+2. **Secret scanning + push protection**
+   Settings → Code security and analysis:
+   - Secret scanning: Enable
+   - Push protection: Enable (auto-blocks accidentally-committed secrets
+     at the `git push` level)
+   - Dependabot alerts: Enable
+   - Dependabot security updates: Enable
+   - CodeQL analysis: Enable (free for public repos)
+
+3. **Required GitHub secrets**
+   Settings → Secrets and variables → Actions → New repository secret:
+   - `ANTHROPIC_API_KEY` — from console.anthropic.com → API keys.
+     Used only by the `/security-review` workflow on PRs. Cap usage in
+     the Anthropic console under Settings → Limits.
+   - `SENTRY_DSN` (optional) — from sentry.io project settings, only if
+     you want crash reporting wired.
+
+4. **Verify `.gitignore` excludes**
+   Confirm the following are in `.gitignore` (they should be already):
+   `.env`, `.env.*`, `!.env.example`, `*.pem`, `aws-exports.json`,
+   `.aws-sam/`, `.cdk.staging/`. Run:
+   `git check-ignore -v .env aws-exports.json` — both should report
+   they're ignored.
+
+### Optional (only if you later want push-to-deploy from GitHub
+
+Actions instead of running `make deploy` locally)
+
+5. **AWS OIDC trust for GitHub Actions**
+   a. In AWS IAM → Identity providers, add an OIDC provider with:
+   - Provider URL: `https://token.actions.githubusercontent.com`
+   - Audience: `sts.amazonaws.com`
+     b. Create an IAM role `garageborrow-deploy` with this trust policy
+     (replace ACCOUNT and confirm the repo path):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::ACCOUNT:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:broots144/garageborrow:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+```
+
+c. Attach the same permissions to this role that your local
+AWS profile uses for `sam deploy` (CloudFormation, IAM, Lambda,
+DynamoDB, S3, CloudFront, Cognito, EventBridge, SSM, SNS, SES).
+d. Update `.github/workflows/deploy.yml` to use the role via
+`aws-actions/configure-aws-credentials@v4` with `role-to-assume`
+pointing at the new role's ARN. Remove any AWS access key
+references.
+e. Test by triggering the deploy workflow manually
+(`workflow_dispatch`) before relying on it for push-to-deploy.
+
+Until step 5 is done, deploys happen via `make deploy-guided` (or
+`make deploy` after first deploy) from your local terminal with
+your AWS profile. That's the recommended approach for solo
+development; CI-driven deploys add value when you have multiple
+contributors or want zero-touch releases.
+
+### Verification
+
+After completing the required steps, open a no-op PR (e.g., a
+whitespace fix in README.md) and confirm:
+
+- `Security Review` workflow runs and posts a comment
+- `ci` workflow runs and passes
+- PR cannot merge until both are green
+- Push protection blocks any commit containing a fake secret like
+  `AKIA1234567890ABCDEF`
