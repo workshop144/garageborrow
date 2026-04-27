@@ -31,11 +31,13 @@ import { markDispatched, shouldSkipDuplicate } from "./lib/notify-dedup.js";
 import { reserveSlot, releaseSlot } from "./lib/spam-cap.js";
 import { deliverInapp, deliverPush, deliverSms, type ChannelMessage } from "./lib/channels.js";
 import {
+  getGarage,
   getMembership,
   getUser,
   listLoansByGarage,
   listMembers,
   listWaitlist,
+  listWishlistRequests,
 } from "./lib/repo.js";
 import type {
   Loan,
@@ -43,6 +45,7 @@ import type {
   Reservation,
   User,
   WaitlistEntry,
+  WishlistRequest,
 } from "@garageborrow/shared";
 
 const URGENT_TYPES: ReadonlySet<string> = new Set([
@@ -201,6 +204,26 @@ const COPY: Record<string, { title: string; body: string }> = {
     title: "Borrow request update",
     body: "Owner just decided on your borrow request — open the app to see.",
   },
+  wishlist_popular: {
+    title: "Wishlist heat",
+    body: "Folks are wishing for something — might be worth a look.",
+  },
+  wishlist_acquired: {
+    title: "It's in the garage",
+    body: "Hey — that thing you wanted is on the pegboard now.",
+  },
+  wishlist_declined: {
+    title: "Wishlist update",
+    body: "Dad passed on a wishlist item you submitted.",
+  },
+  wishlist_duplicated: {
+    title: "Wishlist update",
+    body: "Your wishlist item was merged with an existing request — vote moved over.",
+  },
+  wishlist_digest: {
+    title: "New wishlist requests",
+    body: "Folks added requests overnight — check the wishlist when you get a chance.",
+  },
 };
 
 export async function handleDirectInvoke(event: DirectInvokeEvent, now: Date): Promise<void> {
@@ -280,10 +303,16 @@ interface CronCounts {
   due_today: number;
   overdue_2d: number;
   reservations_tomorrow: number;
+  wishlist_digests: number;
 }
 
 export async function runCronSweep(opts: CronOptions): Promise<CronCounts> {
-  const counts: CronCounts = { due_today: 0, overdue_2d: 0, reservations_tomorrow: 0 };
+  const counts: CronCounts = {
+    due_today: 0,
+    overdue_2d: 0,
+    reservations_tomorrow: 0,
+    wishlist_digests: 0,
+  };
   const garages = opts.garage_ids ?? (await listAllGarageIds());
   const now = opts.now;
   for (const garage_id of garages) {
@@ -322,8 +351,46 @@ export async function runCronSweep(opts: CronOptions): Promise<CronCounts> {
       });
       counts.reservations_tomorrow++;
     }
+
+    if (await dispatchWishlistDigest(garage_id, now)) {
+      counts.wishlist_digests++;
+    }
   }
   return counts;
+}
+
+// Digest of wishlist requests created in the last 24h, sent to the owner
+// once per cron tick. Skipped when:
+//   - the garage has wishlist disabled
+//   - no new requests since the last cron run
+// Honors the same dispatch path (quiet hours, spam cap, dedup) as every
+// other notifier event.
+async function dispatchWishlistDigest(garage_id: string, now: Date): Promise<boolean> {
+  const garage = await getGarage(garage_id);
+  if (!garage || garage.wishlist_enabled === false) return false;
+  const all = await listWishlistRequests(garage_id);
+  const cutoff = new Date(now.getTime() - ONE_DAY_MS).toISOString();
+  const fresh = all.filter((r: WishlistRequest) => r.created_at >= cutoff);
+  if (fresh.length === 0) return false;
+  const owner = await getUser(garage_id, garage.owner_phone);
+  if (!owner) return false;
+  const names = fresh
+    .map((r) => r.item_name)
+    .slice(0, 5)
+    .join(", ");
+  const moreSuffix = fresh.length > 5 ? `, +${fresh.length - 5} more` : "";
+  await dispatch({
+    user: owner,
+    garage_id,
+    prefs: owner.notification_prefs,
+    type: "wishlist_digest",
+    title: `${fresh.length} new wishlist request${fresh.length === 1 ? "" : "s"}`,
+    body: `${names}${moreSuffix}`,
+    payload: { count: fresh.length, request_ids: fresh.map((r) => r.id) },
+    urgent: false,
+    now,
+  });
+  return true;
 }
 
 async function dispatchLoanReminder(

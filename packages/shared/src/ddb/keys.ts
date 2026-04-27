@@ -17,6 +17,11 @@ export interface Gsi2Attrs {
   GSI2SK: string;
 }
 
+export interface Gsi3Attrs {
+  GSI3PK: string;
+  GSI3SK: string;
+}
+
 function assertNoHash(name: string, value: string): void {
   if (value.length === 0) {
     throw new Error(`${name} must not be empty`);
@@ -138,6 +143,58 @@ export function auditLogKey(garage_id: string, date: string, audit_id: string): 
   };
 }
 
+export function wishlistKey(garage_id: string, date: string, request_id: string): DdbKey {
+  assertNoHash("garage_id", garage_id);
+  assertNoHash("date", date);
+  assertNoHash("request_id", request_id);
+  return {
+    pk: `TENANT#${garage_id}`,
+    sk: `WISH#${date}#${request_id}`,
+  };
+}
+
+export function wishlistVoteKey(
+  garage_id: string,
+  request_id: string,
+  voter_phone: string,
+): DdbKey {
+  assertNoHash("garage_id", garage_id);
+  assertNoHash("request_id", request_id);
+  assertNoHash("voter_phone", voter_phone);
+  return {
+    pk: `TENANT#${garage_id}`,
+    sk: `WISHVOTE#${request_id}#${voter_phone}`,
+  };
+}
+
+// Vote count is left-padded so DynamoDB string compare orders 0..999
+// numerically when reading the partition descending. Three digits is plenty
+// for a single-garage wishlist; if a request ever crosses 1000 votes we'll
+// need to widen the pad.
+export const WISHLIST_VOTE_PAD_WIDTH = 3;
+
+export function padVoteCount(count: number): string {
+  if (!Number.isInteger(count) || count < 0) {
+    throw new Error(`vote_count must be a non-negative integer: ${count}`);
+  }
+  return String(count).padStart(WISHLIST_VOTE_PAD_WIDTH, "0");
+}
+
+export function gsi3WishlistByVotes(
+  garage_id: string,
+  vote_count: number,
+  date: string,
+  request_id: string,
+): Gsi3Attrs {
+  assertNoHash("garage_id", garage_id);
+  assertNoHash("date", date);
+  assertNoHash("request_id", request_id);
+  return {
+    GSI3PK: `TENANT#${garage_id}#WISHLIST_OPEN`,
+    GSI3SK: `VOTES#${padVoteCount(vote_count)}#${date}#${request_id}`,
+  };
+}
+
 export function notificationKey(phone: string, ts: string, notification_id: string): DdbKey {
   assertNoHash("phone", phone);
   assertNoHash("ts", ts);
@@ -232,6 +289,18 @@ export type ParsedKey =
       interaction_id: string;
     }
   | { kind: "audit_log"; garage_id: string; date: string; audit_id: string }
+  | {
+      kind: "wishlist_request";
+      garage_id: string;
+      date: string;
+      request_id: string;
+    }
+  | {
+      kind: "wishlist_vote";
+      garage_id: string;
+      request_id: string;
+      voter_phone: string;
+    }
   | {
       kind: "notification";
       phone: string;
@@ -383,6 +452,28 @@ function parseTenantSk(garage_id: string, sk: string): ParsedKey {
         garage_id,
         date: parts[1],
         audit_id: parts[2],
+      };
+    }
+    case "WISH": {
+      if (parts.length !== 3 || !parts[1] || !parts[2]) {
+        throw new KeyParseError(`Invalid WISH SK: ${sk}`);
+      }
+      return {
+        kind: "wishlist_request",
+        garage_id,
+        date: parts[1],
+        request_id: parts[2],
+      };
+    }
+    case "WISHVOTE": {
+      if (parts.length !== 3 || !parts[1] || !parts[2]) {
+        throw new KeyParseError(`Invalid WISHVOTE SK: ${sk}`);
+      }
+      return {
+        kind: "wishlist_vote",
+        garage_id,
+        request_id: parts[1],
+        voter_phone: parts[2],
       };
     }
     default:

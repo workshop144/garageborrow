@@ -15,6 +15,8 @@ import {
   ReservationSchema,
   UserSchema,
   WaitlistEntrySchema,
+  WishlistRequestSchema,
+  WishlistVoteSchema,
 } from "../schemas/index.js";
 
 const PHONE = "+15551234567";
@@ -348,6 +350,104 @@ describe("AiInteractionSchema", () => {
     });
     expect(r.success).toBe(false);
     if (!r.success) expect(pathOf(r.error)).toEqual(["prompt_first_200"]);
+  });
+});
+
+describe("WishlistRequestSchema", () => {
+  const valid = {
+    id: "wish_1",
+    garage_id: "demo-garage",
+    requester_phone: PHONE,
+    item_name: "Pressure washer",
+    status: "open" as const,
+    vote_count: 1,
+    created_at: NOW,
+    updated_at: NOW,
+  };
+  it("accepts valid", () => {
+    expect(WishlistRequestSchema.safeParse(valid).success).toBe(true);
+  });
+  it("accepts optional fields", () => {
+    const r = WishlistRequestSchema.safeParse({
+      ...valid,
+      description: "Electric, 1800 PSI is fine",
+      desired_by: DATE,
+      reason: "Driveway needs it for an event",
+      reference_url: "https://example.com/washer",
+      photo_url: "wishlist/abc.jpg",
+    });
+    expect(r.success).toBe(true);
+  });
+  it("rejects item_name over 120 chars", () => {
+    const r = WishlistRequestSchema.safeParse({ ...valid, item_name: "x".repeat(121) });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(pathOf(r.error)).toEqual(["item_name"]);
+  });
+  it("rejects unknown status", () => {
+    const r = WishlistRequestSchema.safeParse({ ...valid, status: "exploded" });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(pathOf(r.error)).toEqual(["status"]);
+  });
+  it("rejects negative vote_count", () => {
+    const r = WishlistRequestSchema.safeParse({ ...valid, vote_count: -1 });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(pathOf(r.error)).toEqual(["vote_count"]);
+  });
+  it("rejects non-URL reference_url", () => {
+    const r = WishlistRequestSchema.safeParse({ ...valid, reference_url: "not a url" });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(pathOf(r.error)).toEqual(["reference_url"]);
+  });
+});
+
+describe("WishlistVoteSchema", () => {
+  const valid = {
+    request_id: "wish_1",
+    voter_phone: PHONE,
+    voted_at: NOW,
+  };
+  it("accepts valid", () => {
+    expect(WishlistVoteSchema.safeParse(valid).success).toBe(true);
+  });
+  it("rejects bad phone", () => {
+    const r = WishlistVoteSchema.safeParse({ ...valid, voter_phone: "555" });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(pathOf(r.error)).toEqual(["voter_phone"]);
+  });
+});
+
+describe("Garage wishlist defaults", () => {
+  const valid = {
+    id: "demo-garage",
+    name: "Demo Garage",
+    owner_phone: PHONE,
+    city_slug: "sample-town",
+    city_display: "Sample Town, ST",
+    geo: { lat: 39.8283, lon: -98.5795 },
+    quality_tiers: ["Pro", "Standard", "Basic", "Beat-up"],
+    status: "open" as const,
+    created_at: NOW,
+    updated_at: NOW,
+  };
+  it("defaults wishlist_enabled=true and threshold=5", () => {
+    const r = GarageSchema.safeParse(valid);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.wishlist_enabled).toBe(true);
+      expect(r.data.wishlist_popular_threshold).toBe(5);
+    }
+  });
+  it("accepts overrides", () => {
+    const r = GarageSchema.safeParse({
+      ...valid,
+      wishlist_enabled: false,
+      wishlist_popular_threshold: 10,
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.wishlist_enabled).toBe(false);
+      expect(r.data.wishlist_popular_threshold).toBe(10);
+    }
   });
 });
 

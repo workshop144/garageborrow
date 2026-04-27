@@ -146,6 +146,8 @@ const SettingsPatchSchema = z
     ai_default_user_monthly_tokens: z.number().int().nonnegative().optional(),
     ai_default_model: z.enum(["haiku", "sonnet"]).optional(),
     vouching_required: z.boolean().optional(),
+    wishlist_enabled: z.boolean().optional(),
+    wishlist_popular_threshold: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -179,6 +181,10 @@ adminRoutes.patch("/v1/g/:garage/admin/settings", async (c) => {
       : {}),
     ...(body.ai_default_model ? { ai_default_model: body.ai_default_model } : {}),
     ...(body.vouching_required !== undefined ? { vouching_required: body.vouching_required } : {}),
+    ...(body.wishlist_enabled !== undefined ? { wishlist_enabled: body.wishlist_enabled } : {}),
+    ...(body.wishlist_popular_threshold !== undefined
+      ? { wishlist_popular_threshold: body.wishlist_popular_threshold }
+      : {}),
     updated_at: nowIso(),
   };
   await putGarage(updated);

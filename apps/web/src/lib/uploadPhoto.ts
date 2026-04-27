@@ -6,7 +6,7 @@ type SignResponse = { url: string; key: string; expires_in: number };
 // directly to S3. The returned `key` is what the API persists on the entity.
 export async function uploadPhoto(
   file: File,
-  kind: "tool_photo" | "donation_photo" = "tool_photo",
+  kind: "tool_photo" | "donation_photo" | "wishlist_photo" = "tool_photo",
 ): Promise<{ key: string }> {
   const sign = await api.post<SignResponse>("/uploads/sign", {
     kind,

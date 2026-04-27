@@ -20,6 +20,9 @@ import NotificationsInbox from "./pages/NotificationsInbox";
 import Donate from "./pages/Donate";
 import MyDonations from "./pages/MyDonations";
 import PayItForward from "./pages/PayItForward";
+import Wishlist from "./pages/Wishlist";
+import WishlistDetail from "./pages/WishlistDetail";
+import AdminWishlist from "./pages/admin/AdminWishlist";
 import OutRightNow from "./pages/admin/OutRightNow";
 import Inventory from "./pages/admin/Inventory";
 import MembersAdmin from "./pages/admin/MembersAdmin";
@@ -139,6 +142,22 @@ export default function App(): JSX.Element {
                     }
                   />
                   <Route
+                    path="/wishlist"
+                    element={
+                      <ProtectedRoute>
+                        <Wishlist />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/wishlist/:id"
+                    element={
+                      <ProtectedRoute>
+                        <WishlistDetail />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
                     path="/admin"
                     element={
                       <ProtectedRoute>
@@ -194,6 +213,16 @@ export default function App(): JSX.Element {
                       <ProtectedRoute>
                         <AdminGuard>
                           <Activity />
+                        </AdminGuard>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/wishlist"
+                    element={
+                      <ProtectedRoute>
+                        <AdminGuard>
+                          <AdminWishlist />
                         </AdminGuard>
                       </ProtectedRoute>
                     }

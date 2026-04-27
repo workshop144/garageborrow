@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { ComingSoonCard } from "../components/AI/ComingSoonCard";
 import { FilterBar } from "../components/Pegboard/FilterBar";
@@ -111,7 +112,25 @@ export default function Pegboard(): JSX.Element {
             body="Check back soon."
           />
         ) : visible.length === 0 ? (
-          <EmptyState title="Nothing matches that." body="Try a different filter." />
+          <div className="space-y-3">
+            <EmptyState title="Nothing matches that." body="Try a different filter." />
+            {garage.data?.wishlist_enabled !== false ? (
+              <div
+                className="rounded-lg border border-gold-bright/40 bg-gold-bright/10 p-4 text-center text-sm"
+                data-testid="pegboard-wishlist-cta"
+              >
+                Not finding it?{" "}
+                <Link
+                  to={`/wishlist?create=1${
+                    filters.query ? `&name=${encodeURIComponent(filters.query)}` : ""
+                  }`}
+                  className="font-semibold underline"
+                >
+                  Add to wishlist
+                </Link>
+              </div>
+            ) : null}
+          </div>
         ) : (
           <PegboardGrid items={visible} />
         )}

@@ -7,12 +7,14 @@ import {
   gsi1LoanByUser,
   gsi1ReservationByUser,
   gsi2InstanceStatus,
+  gsi3WishlistByVotes,
   incidentKey,
   instanceKey,
   itemKey,
   KeyParseError,
   loanKey,
   notificationKey,
+  padVoteCount,
   parseGsi1ByUser,
   parseGsi2InstanceStatus,
   parseKey,
@@ -22,6 +24,8 @@ import {
   tenantMetaKey,
   tenantUserKey,
   waitlistKey,
+  wishlistKey,
+  wishlistVoteKey,
 } from "../ddb/keys.js";
 
 const GARAGE = "demo-garage";
@@ -164,6 +168,28 @@ describe("DDB main-table keys: round-trip", () => {
     });
   });
 
+  it("WISH#{date}#{request_id}", () => {
+    const k = wishlistKey(GARAGE, DATE, ID);
+    expect(k.sk).toBe(`WISH#${DATE}#${ID}`);
+    expect(parseKey(k.pk, k.sk)).toEqual({
+      kind: "wishlist_request",
+      garage_id: GARAGE,
+      date: DATE,
+      request_id: ID,
+    });
+  });
+
+  it("WISHVOTE#{request_id}#{voter_phone}", () => {
+    const k = wishlistVoteKey(GARAGE, ID, PHONE);
+    expect(k.sk).toBe(`WISHVOTE#${ID}#${PHONE}`);
+    expect(parseKey(k.pk, k.sk)).toEqual({
+      kind: "wishlist_vote",
+      garage_id: GARAGE,
+      request_id: ID,
+      voter_phone: PHONE,
+    });
+  });
+
   it("USER NOTIFICATION#{ts}#{id}", () => {
     const k = notificationKey(PHONE, TS, ID);
     expect(k).toEqual({
@@ -218,6 +244,23 @@ describe("DDB GSI keys: round-trip", () => {
       phone: PHONE,
       ts: TS,
     });
+  });
+
+  it("GSI3 wishlist byVoteCount", () => {
+    const k = gsi3WishlistByVotes(GARAGE, 7, DATE, ID);
+    expect(k).toEqual({
+      GSI3PK: `TENANT#${GARAGE}#WISHLIST_OPEN`,
+      GSI3SK: `VOTES#007#${DATE}#${ID}`,
+    });
+  });
+
+  it("padVoteCount sorts descending across 0..999", () => {
+    const counts = [0, 1, 9, 10, 25, 99, 100, 250, 999];
+    const padded = counts.map((n) => padVoteCount(n));
+    // String-sort-ascending must match numeric-sort-ascending so
+    // ScanIndexForward=false on GSI3 returns most-voted first.
+    const sorted = [...padded].sort();
+    expect(sorted).toEqual(padded);
   });
 
   it("GSI2 byInstanceStatus", () => {

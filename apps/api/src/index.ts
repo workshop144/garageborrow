@@ -17,6 +17,7 @@ import { openapiRoutes } from "./routes/openapi.js";
 import { reservationRoutes } from "./routes/reservations.js";
 import { uploadRoutes } from "./routes/uploads.js";
 import { waitlistRoutes } from "./routes/waitlist.js";
+import { wishlistRoutes } from "./routes/wishlist.js";
 import type { AppEnv } from "./lib/types.js";
 
 export function createApp(): Hono<AppEnv> {
@@ -44,6 +45,7 @@ export function createApp(): Hono<AppEnv> {
   app.route("/", reservationRoutes);
   app.route("/", waitlistRoutes);
   app.route("/", donationRoutes);
+  app.route("/", wishlistRoutes);
   app.route("/", uploadRoutes);
   app.route("/", adminRoutes);
 

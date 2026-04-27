@@ -42,6 +42,11 @@ export const GarageSchema = z.object({
   ai_default_model: AiModelSchema.default("haiku"),
   tier_labels: TierLabelsSchema,
   vouching_required: z.boolean().default(false),
+  // Wishlist gear-request feature. When disabled per garage, all wishlist
+  // routes 404 and the nav entry hides. Threshold defaults to 5 — once a
+  // request crosses it, the owner gets a one-time `wishlist_popular` ping.
+  wishlist_enabled: z.boolean().default(true),
+  wishlist_popular_threshold: z.number().int().positive().default(5),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
 });

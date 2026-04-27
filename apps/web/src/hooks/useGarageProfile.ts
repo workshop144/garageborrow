@@ -15,6 +15,8 @@ export type GarageProfile = {
   tier_labels: TierLabels;
   ai_enabled: boolean;
   vouching_required: boolean;
+  wishlist_enabled: boolean;
+  wishlist_popular_threshold: number;
 };
 
 export const garageProfileKey = (garage: string) => ["garage-profile", garage] as const;

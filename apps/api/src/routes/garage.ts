@@ -32,6 +32,8 @@ garageRoutes.get("/v1/g/:garage", async (c) => {
       tier_labels: garage.tier_labels,
       ai_enabled: garage.ai_enabled,
       vouching_required: garage.vouching_required,
+      wishlist_enabled: garage.wishlist_enabled,
+      wishlist_popular_threshold: garage.wishlist_popular_threshold,
     },
     member: {
       joined_at: membership.joined_at,

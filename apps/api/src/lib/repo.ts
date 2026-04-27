@@ -14,6 +14,7 @@ import {
   donationKey,
   gsi1LoanByUser,
   gsi1ReservationByUser,
+  gsi3WishlistByVotes,
   incidentKey,
   instanceKey,
   itemKey,
@@ -25,6 +26,8 @@ import {
   tenantMetaKey,
   tenantUserKey,
   waitlistKey,
+  wishlistKey,
+  wishlistVoteKey,
 } from "@garageborrow/shared";
 import type {
   AuditLogEntry,
@@ -40,6 +43,8 @@ import type {
   Reservation,
   User,
   WaitlistEntry,
+  WishlistRequest,
+  WishlistVote,
 } from "@garageborrow/shared";
 
 import { ddb } from "./ddb.js";
@@ -388,6 +393,144 @@ export async function getIncident(
   incident_id: string,
 ): Promise<IncidentReport | undefined> {
   return (await listIncidents(garage_id)).find((i) => i.id === incident_id);
+}
+
+// ─────────────────────────── Wishlist ────────────────────────
+//
+// `vote_count` lives on the WishlistRequest record itself and is updated via
+// atomic ADD so concurrent votes never race. GSI3 (byVoteCount) is populated
+// only while status === "open"; once a request transitions to acquired /
+// declined / duplicate / cancelled, the writer clears the GSI3 attributes so
+// the request falls out of the open-list query.
+
+export async function putWishlistRequest(req: WishlistRequest): Promise<void> {
+  const k = wishlistKey(req.garage_id, req.created_at.slice(0, 10), req.id);
+  const base: Record<string, unknown> = { ...req, PK: k.pk, SK: k.sk };
+  if (req.status === "open") {
+    const gsi = gsi3WishlistByVotes(
+      req.garage_id,
+      req.vote_count,
+      req.created_at.slice(0, 10),
+      req.id,
+    );
+    base["GSI3PK"] = gsi.GSI3PK;
+    base["GSI3SK"] = gsi.GSI3SK;
+  }
+  await ddb().send(new PutCommand({ TableName: table(), Item: base }));
+}
+
+export async function listWishlistRequests(garage_id: string): Promise<WishlistRequest[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": `TENANT#${garage_id}`,
+        ":sk": "WISH#",
+      },
+    }),
+  );
+  return (r.Items ?? []) as WishlistRequest[];
+}
+
+export async function getWishlistRequest(
+  garage_id: string,
+  request_id: string,
+): Promise<WishlistRequest | undefined> {
+  return (await listWishlistRequests(garage_id)).find((w) => w.id === request_id);
+}
+
+export async function bumpWishlistVoteCount(req: WishlistRequest, delta: number): Promise<number> {
+  const k = wishlistKey(req.garage_id, req.created_at.slice(0, 10), req.id);
+  // ADD is atomic so concurrent voters can't race on the count. The follow-up
+  // putWishlistRequest below refreshes GSI3 + updated_at; if two concurrent
+  // ADDs both refresh, the loser may write a slightly stale GSI3SK, which
+  // self-corrects on the next vote — the canonical count stays correct.
+  const r = await ddb().send(
+    new UpdateCommand({
+      TableName: table(),
+      Key: { PK: k.pk, SK: k.sk },
+      UpdateExpression: "ADD vote_count :d",
+      ExpressionAttributeValues: { ":d": delta },
+      ReturnValues: "UPDATED_NEW",
+    }),
+  );
+  const next = r.Attributes as { vote_count?: number } | undefined;
+  const newCount = typeof next?.vote_count === "number" ? next.vote_count : req.vote_count + delta;
+  if (req.status === "open") {
+    const fresh: WishlistRequest = {
+      ...req,
+      vote_count: newCount,
+      updated_at: new Date().toISOString(),
+    };
+    await putWishlistRequest(fresh);
+  }
+  return newCount;
+}
+
+export async function putWishlistVote(garage_id: string, vote: WishlistVote): Promise<void> {
+  const k = wishlistVoteKey(garage_id, vote.request_id, vote.voter_phone);
+  await ddb().send(
+    new PutCommand({
+      TableName: table(),
+      Item: { ...vote, PK: k.pk, SK: k.sk },
+    }),
+  );
+}
+
+export async function getWishlistVote(
+  garage_id: string,
+  request_id: string,
+  voter_phone: string,
+): Promise<WishlistVote | undefined> {
+  const k = wishlistVoteKey(garage_id, request_id, voter_phone);
+  const r = await ddb().send(new GetCommand({ TableName: table(), Key: { PK: k.pk, SK: k.sk } }));
+  return r.Item as WishlistVote | undefined;
+}
+
+export async function listWishlistVotes(
+  garage_id: string,
+  request_id: string,
+): Promise<WishlistVote[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": `TENANT#${garage_id}`,
+        ":sk": `WISHVOTE#${request_id}#`,
+      },
+    }),
+  );
+  return (r.Items ?? []) as WishlistVote[];
+}
+
+export async function listAllWishlistVotesForVoter(
+  garage_id: string,
+  voter_phone: string,
+): Promise<WishlistVote[]> {
+  // No dedicated GSI for voter-scoped lookups; scan all wishvote rows in the
+  // garage and filter by voter_phone. Volume is small (one row per vote).
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": `TENANT#${garage_id}`,
+        ":sk": "WISHVOTE#",
+      },
+    }),
+  );
+  return ((r.Items ?? []) as WishlistVote[]).filter((v) => v.voter_phone === voter_phone);
+}
+
+export async function deleteWishlistVote(
+  garage_id: string,
+  request_id: string,
+  voter_phone: string,
+): Promise<void> {
+  const k = wishlistVoteKey(garage_id, request_id, voter_phone);
+  await ddb().send(new DeleteCommand({ TableName: table(), Key: { PK: k.pk, SK: k.sk } }));
 }
 
 // ─────────────────────────── Audit log ────────────────────────

@@ -36,6 +36,8 @@ export function seedGarage(overrides: Partial<Garage> = {}): Garage {
     ai_default_model: "haiku",
     tier_labels: { howdy: "Howdy", friend: "Friend", family: "Family" },
     vouching_required: false,
+    wishlist_enabled: true,
+    wishlist_popular_threshold: 5,
     created_at: now,
     updated_at: now,
     ...overrides,

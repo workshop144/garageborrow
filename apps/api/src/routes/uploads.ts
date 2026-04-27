@@ -16,7 +16,7 @@ export const uploadRoutes = new Hono<AppEnv>();
 uploadRoutes.use("/v1/uploads/sign", requireAuth(), idempotency());
 
 const SignSchema = z.object({
-  kind: z.enum(["tool_photo", "donation_photo"]),
+  kind: z.enum(["tool_photo", "donation_photo", "wishlist_photo"]),
   content_type: z.string().regex(/^image\/(png|jpe?g|webp|heic|heif)$/i),
 });
 

@@ -29,7 +29,11 @@ export type NotifierEventType =
   | "reservation_decided"
   | "incident_logged"
   | "hard_delete_warning"
-  | "borrow_request_decided";
+  | "borrow_request_decided"
+  | "wishlist_popular"
+  | "wishlist_acquired"
+  | "wishlist_declined"
+  | "wishlist_duplicated";
 
 export interface NotifierEvent {
   type: NotifierEventType;

@@ -70,6 +70,10 @@ Resources:
           AttributeType: S
         - AttributeName: GSI2SK
           AttributeType: S
+        - AttributeName: GSI3PK
+          AttributeType: S
+        - AttributeName: GSI3SK
+          AttributeType: S
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
@@ -89,6 +93,18 @@ Resources:
             - AttributeName: GSI2PK
               KeyType: HASH
             - AttributeName: GSI2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: byVoteCount
+          # Open wishlist requests sorted by votes desc, then date desc.
+          # Only WishlistRequest items with status=open populate GSI3 keys —
+          # the moment a request is acquired/declined/duplicated/cancelled,
+          # the writer clears GSI3PK/GSI3SK so it falls out of this index.
+          KeySchema:
+            - AttributeName: GSI3PK
+              KeyType: HASH
+            - AttributeName: GSI3SK
               KeyType: RANGE
           Projection:
             ProjectionType: ALL

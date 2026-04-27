@@ -11,6 +11,7 @@ const SIDEBAR: SidebarItem[] = [
   { to: "/admin/items", label: "Inventory" },
   { to: "/admin/members", label: "Members" },
   { to: "/admin/donations", label: "Donations" },
+  { to: "/admin/wishlist", label: "Wishlist" },
   { to: "/admin/incidents", label: "Incidents" },
   { to: "/admin/activity", label: "Activity log" },
   { to: "/admin/settings", label: "Settings" },

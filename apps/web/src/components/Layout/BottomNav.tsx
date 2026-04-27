@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { useMe } from "../../lib/hooks/useMe";
+import { useGarageProfile } from "../../hooks/useGarageProfile";
 
 type Tab = {
   to: string;
@@ -7,6 +8,19 @@ type Tab = {
   icon: JSX.Element;
   end?: boolean;
 };
+
+const WISHLIST_ICON = (
+  <svg
+    viewBox="0 0 24 24"
+    className="h-5 w-5"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    aria-hidden="true"
+  >
+    <path d="M12 21s-7-4.5-9-9.5C1.5 8 4 5 7 5c2 0 3 1 5 3 2-2 3-3 5-3 3 0 5.5 3 4 6.5C19 16.5 12 21 12 21z" />
+  </svg>
+);
 
 const PEGBOARD_ICON = (
   <svg
@@ -79,21 +93,26 @@ const PROFILE_ICON = (
   </svg>
 );
 
-const BASE_TABS: Tab[] = [
-  { to: "/", label: "Pegboard", icon: PEGBOARD_ICON, end: true },
-  { to: "/me", label: "My Stuff", icon: MY_STUFF_ICON },
-  { to: "/donate", label: "Donate", icon: DONATE_ICON },
-];
-
+const PEGBOARD_TAB: Tab = { to: "/", label: "Pegboard", icon: PEGBOARD_ICON, end: true };
+const WISHLIST_TAB: Tab = { to: "/wishlist", label: "Wishlist", icon: WISHLIST_ICON };
+const MY_STUFF_TAB: Tab = { to: "/me", label: "My Stuff", icon: MY_STUFF_ICON };
+const DONATE_TAB: Tab = { to: "/donate", label: "Donate", icon: DONATE_ICON };
 const PROFILE_TAB: Tab = { to: "/me/profile", label: "Profile", icon: PROFILE_ICON };
 const ADMIN_TAB: Tab = { to: "/admin", label: "Admin", icon: ADMIN_ICON };
 
 export function BottomNav(): JSX.Element {
   const me = useMe();
+  const garage = useGarageProfile();
   const isOwner = me.data?.tier === "owner";
-  const tabs: Tab[] = isOwner
-    ? [...BASE_TABS, ADMIN_TAB, PROFILE_TAB]
-    : [...BASE_TABS, PROFILE_TAB];
+  const wishlistOn = garage.data?.wishlist_enabled !== false;
+  const tabs: Tab[] = [
+    PEGBOARD_TAB,
+    ...(wishlistOn ? [WISHLIST_TAB] : []),
+    MY_STUFF_TAB,
+    DONATE_TAB,
+    ...(isOwner ? [ADMIN_TAB] : []),
+    PROFILE_TAB,
+  ];
 
   return (
     <nav

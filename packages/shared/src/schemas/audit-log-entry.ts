@@ -15,6 +15,7 @@ export const AuditEntityTypeSchema = z.enum([
   "incident",
   "garage",
   "items_bulk",
+  "wishlist_request",
 ]);
 export type AuditEntityType = z.infer<typeof AuditEntityTypeSchema>;
 
