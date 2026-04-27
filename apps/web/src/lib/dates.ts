@@ -3,14 +3,7 @@
 // Keep all UI date code going through these helpers so DST edge cases and
 // timezone conversions stay in one place.
 
-import {
-  format,
-  formatDistanceToNowStrict,
-  isToday,
-  isTomorrow,
-  isYesterday,
-  parseISO,
-} from "date-fns";
+import { format, formatDistanceStrict, parseISO } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 
 export const APP_TIMEZONE = "America/New_York";
@@ -21,6 +14,11 @@ function asDate(input: Date | string): Date {
 
 // "since Tuesday", "due ~Sat", "2 days ago", "in 3 hours". Tuned for borrow
 // timelines: relative phrasing in the same week, weekday name beyond that.
+//
+// All day-boundary comparisons (today/tomorrow/yesterday) happen in the
+// app's home zone — date-fns's isToday/isTomorrow use the runtime's local
+// TZ and would be wrong on a UTC CI runner. Distances honour the passed
+// `now` so callers can stub time deterministically in tests.
 export function formatRelative(input: Date | string, now: Date = new Date()): string {
   const d = asDate(input);
   const ms = d.getTime() - now.getTime();
@@ -32,11 +30,18 @@ export function formatRelative(input: Date | string, now: Date = new Date()): st
   if (absMs < minute) {
     return ms >= 0 ? "in moments" : "just now";
   }
-  if (isToday(d)) {
-    return ms >= 0 ? `in ${formatDistanceToNowStrict(d)}` : `${formatDistanceToNowStrict(d)} ago`;
+
+  const dDay = formatInTimeZone(d, APP_TIMEZONE, "yyyy-MM-dd");
+  const nowDay = formatInTimeZone(now, APP_TIMEZONE, "yyyy-MM-dd");
+  const oneDayBefore = formatInTimeZone(new Date(now.getTime() - day), APP_TIMEZONE, "yyyy-MM-dd");
+  const oneDayAfter = formatInTimeZone(new Date(now.getTime() + day), APP_TIMEZONE, "yyyy-MM-dd");
+
+  if (dDay === nowDay) {
+    const dist = formatDistanceStrict(d, now);
+    return ms >= 0 ? `in ${dist}` : `${dist} ago`;
   }
-  if (isTomorrow(d)) return "tomorrow";
-  if (isYesterday(d)) return "yesterday";
+  if (dDay === oneDayAfter) return "tomorrow";
+  if (dDay === oneDayBefore) return "yesterday";
   if (absMs < 7 * day) {
     const weekday = formatInTimeZone(d, APP_TIMEZONE, "EEEE");
     return ms >= 0 ? `~${weekday}` : `since ${weekday}`;

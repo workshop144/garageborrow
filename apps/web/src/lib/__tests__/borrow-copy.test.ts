@@ -17,11 +17,36 @@ describe("resolveLiabilityTier", () => {
     expect(resolveLiabilityTier(["sharp"])).toBe("power-tool");
   });
 
+  it.each([
+    "power-tool",
+    "power_tool",
+    "powertool",
+    "sharp",
+    "heavy",
+    "motorized",
+    "saw",
+    "chainsaw",
+    "grinder",
+  ])("maps power-tool tag '%s' to 'power-tool'", (tag) => {
+    expect(resolveLiabilityTier([tag])).toBe("power-tool");
+  });
+
   it("returns 'high-value' for trailer / log-splitter / 3D printer / CNC", () => {
     expect(resolveLiabilityTier(["trailer"])).toBe("high-value");
     expect(resolveLiabilityTier(["log-splitter"])).toBe("high-value");
     expect(resolveLiabilityTier(["3d-printer"])).toBe("high-value");
     expect(resolveLiabilityTier(["cnc"])).toBe("high-value");
+  });
+
+  it.each(["trailer", "log-splitter", "log_splitter", "3d-printer", "cnc"])(
+    "maps high-value tag '%s' to 'high-value'",
+    (tag) => {
+      expect(resolveLiabilityTier([tag])).toBe("high-value");
+    },
+  );
+
+  it("ignores unknown tags", () => {
+    expect(resolveLiabilityTier(["floral", "kitchen", "soft"])).toBe("standard");
   });
 
   it("'high-value' wins when both high-value and power-tool tags are present", () => {

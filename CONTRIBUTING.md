@@ -51,4 +51,8 @@ See the README's "Deploy" section. The first deploy is guided (`sam deploy --gui
 
 ## Code of Conduct
 
-A `CODE_OF_CONDUCT.md` will be added to this repo. Until then, please act in good faith and treat other contributors with respect.
+This project adopts the [Contributor Covenant 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/). See [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) for how to report incidents.
+
+## Deploy your own garage
+
+If you'd like to stand up your own neighborhood garage, see [`docs/deploy.md`](./docs/deploy.md) for the 13-step playbook (domain, ACM, Cognito SMS, VAPID, billing, error tracking, owner seed, first inventory).

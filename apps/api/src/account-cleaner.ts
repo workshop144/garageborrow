@@ -26,7 +26,10 @@ import { BatchWriteCommand, DeleteCommand, PutCommand, ScanCommand } from "@aws-
 import { ddb } from "./lib/ddb.js";
 import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
+import { initSentry } from "./lib/sentry.js";
 import type { User } from "@garageborrow/shared";
+
+initSentry();
 
 const THIRTY_DAYS_MS = 30 * 24 * 3600_000;
 

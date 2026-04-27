@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 
 import { ApiError, toEnvelope } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
+import { captureError } from "../lib/sentry.js";
 import type { AppEnv } from "../lib/types.js";
 
 // Catches sync/async throws inside route handlers and returns the canonical
@@ -25,7 +26,10 @@ export const onError: ErrorHandler<AppEnv> = (err, c) => {
 
 function respondWithError(c: Context<AppEnv>, err: unknown): Response {
   if (err instanceof ApiError) {
-    if (err.status >= 500) logger.error({ err }, "api_error_5xx");
+    if (err.status >= 500) {
+      logger.error({ err }, "api_error_5xx");
+      captureError(err, { path: c.req.path, method: c.req.method });
+    }
     return c.json(toEnvelope(err), err.status as ContentfulStatusCode);
   }
   if (err instanceof ZodError) {
@@ -33,6 +37,7 @@ function respondWithError(c: Context<AppEnv>, err: unknown): Response {
     return c.json(toEnvelope(apiErr), 400);
   }
   logger.error({ err }, "unhandled_error");
+  captureError(err, { path: c.req.path, method: c.req.method });
   const fallback = new ApiError("internal_error", "Something broke.");
   return c.json(toEnvelope(fallback), 500);
 }

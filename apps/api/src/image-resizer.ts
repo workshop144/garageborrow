@@ -14,6 +14,9 @@ import type { Readable } from "node:stream";
 
 import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
+import { captureError, initSentry } from "./lib/sentry.js";
+
+initSentry();
 
 const THUMB_PREFIX = "thumb/";
 const MEDIUM_PREFIX = "medium/";
@@ -145,6 +148,7 @@ export async function handler(event: S3Event): Promise<{ processed: number }> {
       if (result) processed++;
     } catch (err) {
       logger.warn({ err, key }, "resizer_failed");
+      captureError(err, { bucket, key });
     }
   }
   return { processed };

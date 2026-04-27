@@ -33,7 +33,33 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
+        # vitest covers @axe-core via apps/web's LegalDocument.test.tsx;
+        # any new violation on a covered page surfaces here.
         run: pnpm test
 
       - name: Build
         run: pnpm build
+
+      - name: Install Chrome for Lighthouse
+        # ubuntu-24.04 runners don't preinstall Chrome. Pinning here so the
+        # Lighthouse step has a deterministic browser instead of relying on
+        # whatever ships in the runner image.
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Lighthouse
+        # Targets: 90+ Performance / 95+ Accessibility / 95+ Best Practices / 90+ SEO.
+        # Thresholds are configured inside scripts/lighthouse.sh.
+        run: ./scripts/lighthouse.sh
+
+      - name: Upload Lighthouse report
+        # upload-artifact@v4 skips dotfile directories by default; the
+        # report lives in .lighthouse/, so include-hidden-files is required.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: .lighthouse/
+          include-hidden-files: true
+          retention-days: 7

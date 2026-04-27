@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { MotionConfig } from "framer-motion";
 import { AppShell } from "../components/AppShell";
 import { ComingSoonCard } from "../components/AI/ComingSoonCard";
 import { FilterBar } from "../components/Pegboard/FilterBar";
@@ -70,56 +69,54 @@ export default function Pegboard(): JSX.Element {
   const visible = useMemo(() => applyFilters(items, filters), [items, filters]);
 
   return (
-    <MotionConfig reducedMotion="user">
-      <AppShell>
-        <div
-          className="relative"
-          style={{
-            transform: `translateY(${pull}px)`,
-            transition: pull === 0 ? "transform 200ms ease-out" : undefined,
-          }}
-        >
-          {pull > 8 || refreshing ? (
-            <div className="absolute -top-8 left-0 right-0 flex justify-center text-xs opacity-70">
-              {refreshing ? "Refreshing…" : "Pull to refresh"}
-            </div>
-          ) : null}
-          <header className="mb-4">
-            <h1 className="font-heading text-3xl text-gold-bright">The Pegboard</h1>
-            <p className="text-sm opacity-70">Tap a tool to borrow it.</p>
-          </header>
-
-          <div className="mb-4">
-            <FilterBar filters={filters} onChange={setFilters} categories={categories} />
+    <AppShell>
+      <div
+        className="relative"
+        style={{
+          transform: `translateY(${pull}px)`,
+          transition: pull === 0 ? "transform 200ms ease-out" : undefined,
+        }}
+      >
+        {pull > 8 || refreshing ? (
+          <div className="absolute -top-8 left-0 right-0 flex justify-center text-xs opacity-70">
+            {refreshing ? "Refreshing…" : "Pull to refresh"}
           </div>
+        ) : null}
+        <header className="mb-4">
+          <h1 className="font-heading text-3xl text-gold-bright">The Pegboard</h1>
+          <p className="text-sm opacity-70">Tap a tool to borrow it.</p>
+        </header>
 
-          {showAiCard ? (
-            <div className="mb-4">
-              <ComingSoonCard />
-            </div>
-          ) : null}
-
-          {query.isLoading ? (
-            <div className="rounded-lg border border-workshop/10 dark:border-surface-light/10 p-8 text-center text-sm opacity-70">
-              Loading the pegboard…
-            </div>
-          ) : query.isError ? (
-            <div className="rounded-lg border border-status-overdue/40 bg-status-overdue/10 p-6 text-center text-sm">
-              Couldn&apos;t load the pegboard. Pull to refresh, or try again later.
-            </div>
-          ) : items.length === 0 ? (
-            <EmptyState
-              title="Dad hasn't put anything on the pegboard yet."
-              body="Check back soon."
-            />
-          ) : visible.length === 0 ? (
-            <EmptyState title="Nothing matches that." body="Try a different filter." />
-          ) : (
-            <PegboardGrid items={visible} />
-          )}
+        <div className="mb-4">
+          <FilterBar filters={filters} onChange={setFilters} categories={categories} />
         </div>
-      </AppShell>
-    </MotionConfig>
+
+        {showAiCard ? (
+          <div className="mb-4">
+            <ComingSoonCard />
+          </div>
+        ) : null}
+
+        {query.isLoading ? (
+          <div className="rounded-lg border border-workshop/10 dark:border-surface-light/10 p-8 text-center text-sm opacity-70">
+            Loading the pegboard…
+          </div>
+        ) : query.isError ? (
+          <div className="rounded-lg border border-status-overdue/40 bg-status-overdue/10 p-6 text-center text-sm">
+            Couldn&apos;t load the pegboard. Pull to refresh, or try again later.
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState
+            title="Dad hasn't put anything on the pegboard yet."
+            body="Check back soon."
+          />
+        ) : visible.length === 0 ? (
+          <EmptyState title="Nothing matches that." body="Try a different filter." />
+        ) : (
+          <PegboardGrid items={visible} />
+        )}
+      </div>
+    </AppShell>
   );
 }
 

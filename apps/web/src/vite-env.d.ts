@@ -13,6 +13,8 @@ interface ImportMetaEnv {
   readonly VITE_TENANT_NAME?: string;
   readonly VITE_TENANT_SHORT_NAME?: string;
   readonly VITE_GARAGE_SLUG?: string;
+  readonly VITE_SENTRY_DSN?: string;
+  readonly VITE_RELEASE_SHA?: string;
 }
 
 interface ImportMeta {

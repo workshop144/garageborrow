@@ -27,6 +27,13 @@ Parameters:
     Type: Number
     Default: 30
     Description: CloudWatch Logs retention for all Lambda log groups.
+  SentryDsn:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: >-
+      Sentry DSN used by every Lambda. Leave empty to disable error tracking;
+      the Lambdas will skip init and emit a single warning per cold start.
 
 Globals:
   Function:
@@ -41,6 +48,7 @@ Globals:
         STAGE: !Ref Stage
         LOG_LEVEL: INFO
         NODE_OPTIONS: "--enable-source-maps"
+        SENTRY_DSN: !Ref SentryDsn
 
 Resources:
   # ───────────────────────── DynamoDB ─────────────────────────

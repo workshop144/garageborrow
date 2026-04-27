@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import type { NotificationPrefs as NotificationPrefsValue } from "@garageborrow/shared";
 
 import { AppShell } from "../components/AppShell";
@@ -142,6 +143,22 @@ export default function ProfileSettings(): JSX.Element {
             <div className="mt-3">
               <DataExportButton />
             </div>
+          </section>
+
+          <section>
+            <h2 className="font-heading text-xl">Legal</h2>
+            <ul className="mt-3 space-y-1 text-sm">
+              <li>
+                <Link to="/legal/terms" className="underline hover:opacity-80">
+                  Terms of Service
+                </Link>
+              </li>
+              <li>
+                <Link to="/legal/privacy" className="underline hover:opacity-80">
+                  Privacy Policy
+                </Link>
+              </li>
+            </ul>
           </section>
 
           <section>

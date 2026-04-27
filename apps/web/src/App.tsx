@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { MotionConfig } from "framer-motion";
 import { useEffect, useMemo } from "react";
 import { AuthProvider, useAuth } from "./lib/auth/AuthContext";
 import { ProtectedRoute } from "./lib/auth/ProtectedRoute";
@@ -46,172 +47,174 @@ export default function App(): JSX.Element {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
-            <AuthProvider>
-              <ApiTokenBridge />
-              <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route path="/legal/terms" element={<LegalTerms />} />
-                <Route path="/legal/privacy" element={<LegalPrivacy />} />
-                <Route path="/offline" element={<Offline />} />
+        <MotionConfig reducedMotion="user">
+          <QueryClientProvider client={queryClient}>
+            <BrowserRouter>
+              <AuthProvider>
+                <ApiTokenBridge />
+                <Routes>
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/legal/terms" element={<LegalTerms />} />
+                  <Route path="/legal/privacy" element={<LegalPrivacy />} />
+                  <Route path="/offline" element={<Offline />} />
 
-                <Route
-                  path="/"
-                  element={
-                    <ProtectedRoute>
-                      <Pegboard />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/onboarding"
-                  element={
-                    <ProtectedRoute>
-                      <Onboarding />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/tool/:id"
-                  element={
-                    <ProtectedRoute>
-                      <ToolDetail />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/me"
-                  element={
-                    <ProtectedRoute>
-                      <MyStuff />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/me/profile"
-                  element={
-                    <ProtectedRoute>
-                      <ProfileSettings />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/me/notifications"
-                  element={
-                    <ProtectedRoute>
-                      <NotificationsInbox />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/g/:garage/members"
-                  element={
-                    <ProtectedRoute>
-                      <Members />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/donate"
-                  element={
-                    <ProtectedRoute>
-                      <Donate />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/me/donations"
-                  element={
-                    <ProtectedRoute>
-                      <MyDonations />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/pay-it-forward"
-                  element={
-                    <ProtectedRoute>
-                      <PayItForward />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/admin"
-                  element={
-                    <ProtectedRoute>
-                      <AdminGuard>
-                        <OutRightNow />
-                      </AdminGuard>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/admin/items"
-                  element={
-                    <ProtectedRoute>
-                      <AdminGuard>
-                        <Inventory />
-                      </AdminGuard>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/admin/members"
-                  element={
-                    <ProtectedRoute>
-                      <AdminGuard>
-                        <MembersAdmin />
-                      </AdminGuard>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/admin/donations"
-                  element={
-                    <ProtectedRoute>
-                      <AdminGuard>
-                        <Donations />
-                      </AdminGuard>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/admin/incidents"
-                  element={
-                    <ProtectedRoute>
-                      <AdminGuard>
-                        <Incidents />
-                      </AdminGuard>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/admin/activity"
-                  element={
-                    <ProtectedRoute>
-                      <AdminGuard>
-                        <Activity />
-                      </AdminGuard>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/admin/settings"
-                  element={
-                    <ProtectedRoute>
-                      <AdminGuard>
-                        <Settings />
-                      </AdminGuard>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route path="/index.html" element={<Navigate to="/" replace />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </AuthProvider>
-          </BrowserRouter>
-        </QueryClientProvider>
+                  <Route
+                    path="/"
+                    element={
+                      <ProtectedRoute>
+                        <Pegboard />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/onboarding"
+                    element={
+                      <ProtectedRoute>
+                        <Onboarding />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/tool/:id"
+                    element={
+                      <ProtectedRoute>
+                        <ToolDetail />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/me"
+                    element={
+                      <ProtectedRoute>
+                        <MyStuff />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/me/profile"
+                    element={
+                      <ProtectedRoute>
+                        <ProfileSettings />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/me/notifications"
+                    element={
+                      <ProtectedRoute>
+                        <NotificationsInbox />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/g/:garage/members"
+                    element={
+                      <ProtectedRoute>
+                        <Members />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/donate"
+                    element={
+                      <ProtectedRoute>
+                        <Donate />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/me/donations"
+                    element={
+                      <ProtectedRoute>
+                        <MyDonations />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/pay-it-forward"
+                    element={
+                      <ProtectedRoute>
+                        <PayItForward />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin"
+                    element={
+                      <ProtectedRoute>
+                        <AdminGuard>
+                          <OutRightNow />
+                        </AdminGuard>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/items"
+                    element={
+                      <ProtectedRoute>
+                        <AdminGuard>
+                          <Inventory />
+                        </AdminGuard>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/members"
+                    element={
+                      <ProtectedRoute>
+                        <AdminGuard>
+                          <MembersAdmin />
+                        </AdminGuard>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/donations"
+                    element={
+                      <ProtectedRoute>
+                        <AdminGuard>
+                          <Donations />
+                        </AdminGuard>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/incidents"
+                    element={
+                      <ProtectedRoute>
+                        <AdminGuard>
+                          <Incidents />
+                        </AdminGuard>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/activity"
+                    element={
+                      <ProtectedRoute>
+                        <AdminGuard>
+                          <Activity />
+                        </AdminGuard>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/settings"
+                    element={
+                      <ProtectedRoute>
+                        <AdminGuard>
+                          <Settings />
+                        </AdminGuard>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route path="/index.html" element={<Navigate to="/" replace />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </AuthProvider>
+            </BrowserRouter>
+          </QueryClientProvider>
+        </MotionConfig>
       </ThemeProvider>
     </ErrorBoundary>
   );

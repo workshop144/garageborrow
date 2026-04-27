@@ -1,5 +1,6 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
+import { captureError } from "../lib/sentry";
 
 type Props = { children: ReactNode };
 type State = { error: Error | null };
@@ -13,6 +14,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error("App error boundary caught:", error, info);
+    captureError(error, { componentStack: info.componentStack });
   }
 
   reset = (): void => {

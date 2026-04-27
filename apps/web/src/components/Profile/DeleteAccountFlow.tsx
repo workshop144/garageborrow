@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { useAuth } from "../../lib/auth/AuthContext";
 import { confirmOtp, startSignIn } from "../../lib/auth/cognito";
@@ -119,6 +120,17 @@ export function DeleteAccountFlow({ deletedAt }: Props): JSX.Element {
           <p>
             We&apos;ll keep your loan/wishlist/donation history but anonymize anything tied to you.
             You can cancel for the first 30 days.
+          </p>
+          <p className="text-xs opacity-80">
+            See{" "}
+            <Link to="/legal/privacy" className="underline">
+              how we handle your data
+            </Link>{" "}
+            and the{" "}
+            <Link to="/legal/terms" className="underline">
+              terms of service
+            </Link>
+            .
           </p>
           <div className="flex gap-2">
             <button

@@ -1,3 +1,5 @@
+import { captureError } from "./sentry";
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/v1";
 
 export class ApiError extends Error {
@@ -69,12 +71,16 @@ export async function apiRequest<T>(path: string, opts: RequestOpts = {}): Promi
 
   if (!res.ok) {
     const env = (parsed ?? {}) as ErrorEnvelope;
-    throw new ApiError({
+    const apiErr = new ApiError({
       code: env.error?.code ?? `HTTP_${res.status}`,
       message: env.error?.message ?? res.statusText ?? "Request failed",
       status: res.status,
       details: env.error?.details,
     });
+    if (apiErr.status >= 500) {
+      captureError(apiErr, { url, method: init.method });
+    }
+    throw apiErr;
   }
   return parsed as T;
 }

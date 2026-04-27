@@ -21,6 +21,7 @@
     "@aws-sdk/lib-dynamodb": "^3.668.0",
     "@aws-sdk/s3-request-presigner": "^3.668.0",
     "@garageborrow/shared": "workspace:*",
+    "@sentry/aws-serverless": "^8.36.0",
     "hono": "^4.6.3",
     "jose": "^5.9.4",
     "pino": "^9.4.0",

@@ -2,6 +2,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { initSentry } from "./lib/sentry";
+
+initSentry();
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {

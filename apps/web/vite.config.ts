@@ -50,6 +50,15 @@ export default defineConfig(({ mode }) => {
               purpose: "maskable",
             },
           ],
+          // App shortcuts — long-press the installed app icon to surface these.
+          // /wishlist routes to NotFound until v1.5; declared here so the
+          // shortcut shows up the moment wishlist ships.
+          shortcuts: [
+            { name: "Pegboard", url: "/" },
+            { name: "My Stuff", url: "/me" },
+            { name: "Wishlist", url: "/wishlist" },
+            { name: "Donate", url: "/donate" },
+          ],
         },
         injectManifest: {
           globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],

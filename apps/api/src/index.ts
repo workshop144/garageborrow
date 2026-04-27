@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { handle } from "hono/aws-lambda";
 
 import { env } from "./lib/env.js";
+import { initSentry } from "./lib/sentry.js";
 import { errorBoundary, onError } from "./middleware/error.js";
+
+initSentry();
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
 import { donationRoutes } from "./routes/donations.js";

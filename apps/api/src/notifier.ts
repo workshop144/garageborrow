@@ -23,6 +23,9 @@ import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "./lib/ddb.js";
 import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
+import { initSentry } from "./lib/sentry.js";
+
+initSentry();
 import { isInQuietHours, nextEndInstant } from "./lib/quiet-hours.js";
 import { markDispatched, shouldSkipDuplicate } from "./lib/notify-dedup.js";
 import { reserveSlot, releaseSlot } from "./lib/spam-cap.js";
