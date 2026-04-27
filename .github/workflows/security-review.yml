@@ -1,0 +1,59 @@
+name: Security Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  security-review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Run `/security-review` against the diff for this pull request and
+            post the findings as a single PR comment.
+
+            For each finding, include:
+              - Severity: CRITICAL, HIGH, MEDIUM, LOW, or INFO
+              - File and line reference
+              - One-paragraph description and recommended fix
+
+            Focus areas:
+              - Injection (SQL, NoSQL, command, prototype pollution)
+              - XSS — including unsafe URL schemes (`javascript:`, `data:`,
+                `vbscript:`) in href/src fields. The repo uses `safeHref()` at
+                `apps/web/src/lib/safeHref.ts` and `HttpUrl` at
+                `packages/shared/src/schemas/common.ts`. Flag any new
+                `z.string().url()` usage on user-supplied URLs and any raw
+                `href={user_value}` rendering.
+              - Authn / authz / IDOR
+              - Secrets, hardcoded credentials, leaked tokens
+              - Unsafe deserialization, SSRF, open redirects
+              - Insecure crypto / weak randomness
+              - Dependency-introduced vulnerabilities
+
+            After posting the comment, if there are any CRITICAL or HIGH
+            severity findings, exit with status code 1 so the check fails
+            and branch protection (when enabled) blocks merge. If there are
+            only MEDIUM, LOW, or INFO findings — or none at all — exit 0.
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(rg:*),Bash(grep:*)"

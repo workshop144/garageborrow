@@ -141,6 +141,17 @@ For the full first-time playbook (domain, ACM, Cognito SMS production approval, 
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). Code of conduct: [Contributor Covenant 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/) — see [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 
+## Security
+
+Every PR is automatically reviewed by Claude Code's `/security-review`
+workflow at `.github/workflows/security-review.yml`. High-severity
+findings block merge; medium and low findings are commented for review.
+Local pre-push runs are documented in [CLAUDE.md](./CLAUDE.md).
+
+Found a vulnerability? Email {OWNER_CONTACT — set before publishing} or
+open a private security advisory at
+https://github.com/broots144/garageborrow/security/advisories/new.
+
 ## License
 
 [MIT](./LICENSE) — Copyright 2026 Mr. Broots.
