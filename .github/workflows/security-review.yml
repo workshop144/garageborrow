@@ -8,8 +8,11 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  issues: write
-  id-token: write
+  id-token: write # required by anthropics/claude-code-action for its GitHub auth flow
+
+concurrency:
+  group: security-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   security-review:
@@ -21,9 +24,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@a9ac9eb3a874922a7e34246afae3914113c6626f # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -32,7 +36,7 @@ jobs:
             post the findings as a single PR comment.
 
             For each finding, include:
-              - Severity: CRITICAL, HIGH, MEDIUM, LOW, or INFO
+              - Severity: critical, high, medium, low, or info
               - File and line reference
               - One-paragraph description and recommended fix
 
@@ -50,10 +54,58 @@ jobs:
               - Insecure crypto / weak randomness
               - Dependency-introduced vulnerabilities
 
-            After posting the comment, if there are any CRITICAL or HIGH
-            severity findings, exit with status code 1 so the check fails
-            and branch protection (when enabled) blocks merge. If there are
-            only MEDIUM, LOW, or INFO findings — or none at all — exit 0.
+            After posting the comment, use the Write tool to write a
+            structured summary to the path `findings.json` (relative to
+            the current working directory, which is the repository root)
+            using exactly this schema:
 
+              {
+                "findings": [
+                  {
+                    "severity": "critical|high|medium|low|info",
+                    "file": "path/to/file.ts",
+                    "line": 42,
+                    "description": "short description"
+                  }
+                ]
+              }
+
+            If there are no findings, write `{"findings": []}`. The severity
+            values must be lowercase. A follow-up workflow step will parse
+            this file to gate the merge — your PR comment is for humans, the
+            JSON file is the source of truth for the gate.
+
+          # Write is unscoped because path-glob filters (Write(findings.json),
+          # Write(**/findings.json)) caused permission denials in practice. The
+          # argument that scoping defends against prompt-injection gate-bypass
+          # is incorrect: Claude can write whatever JSON content it's tricked
+          # into writing regardless of which paths it's allowed to write to —
+          # scoping doesn't prevent that attack. And the runner's checkout is
+          # ephemeral — files Claude writes here don't affect any other step
+          # because the security analysis is based on `gh pr diff` (a frozen
+          # snapshot), not the working tree. Defense against gate-bypass via
+          # injection has to come from elsewhere (e.g., schema validation,
+          # cross-checking findings against the diff), not from Write scope.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(rg:*),Bash(grep:*)"
+            --allowedTools "Write,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(rg:*),Bash(grep:*)"
+
+      - name: Gate on high-severity findings
+        if: always()
+        run: |
+          if [ ! -f findings.json ]; then
+            echo "::error::Security review did not produce findings.json"
+            exit 1
+          fi
+          HIGH=$(jq '[.findings[] | select(.severity=="high" or .severity=="critical")] | length' findings.json)
+          echo "High/critical findings: $HIGH"
+          if [ "$HIGH" -gt 0 ]; then
+            echo "::error::Security review found $HIGH high/critical issue(s). See PR comment for details."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-findings
+          path: findings.json
+          retention-days: 30

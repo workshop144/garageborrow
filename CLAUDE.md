@@ -10,23 +10,31 @@ locally is faster and cheaper than CI iteration.
 ### Required steps before opening any PR
 
 1. Implement the change on the feature branch
-2. Run `pnpm -r typecheck`, `pnpm -r test`, `pnpm -r build` until green
+2. Run `pnpm lint`, `pnpm -r typecheck`, `pnpm -r test`, `pnpm -r build`
+   until green
 3. Run `make validate` if `infra/template.yaml` was modified
-4. **Run `/security-review`** — fix all high-severity findings before push
-5. Stage, commit, push
-6. Open PR via `gh pr create`
+4. **Run `/security-review`** on the working-tree changes — fix all
+   high-severity findings before staging
+5. Stage and commit
+6. Push
+7. Open PR via `gh pr create`
 
 ### Trigger conditions for Claude Code sessions
 
 When a prompt asks you to commit, push, and open a PR:
 
-- BEFORE `git commit`, run `/security-review` on the staged changes
+- BEFORE `git add`, run `/security-review` on the working-tree changes
 - If high-severity findings exist, present them and pause for the user's
-  decision before proceeding to commit
+  decision before proceeding to stage and commit
 - If only medium- or low-severity findings exist, document them in the PR
   body under a "Security review notes" section and continue
 - Do NOT skip /security-review even if the user prompt doesn't explicitly
   mention it — it's a standing requirement for all PR-creating workflows
+- When continuing work on an existing feature branch (rather than
+  creating a new one from main), first run
+  `git fetch origin && git rebase origin/main` and resolve any
+  conflicts before adding new commits. Stale branches accumulate diff
+  noise from main's merged changes.
 
 ### Required URL field handling
 

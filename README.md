@@ -143,13 +143,16 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). Code of conduct: [Contributor Covenant
 
 ## Security
 
-Every PR is automatically reviewed by Claude Code's `/security-review`
-workflow at `.github/workflows/security-review.yml`. High-severity
-findings block merge; medium and low findings are commented for review.
-Local pre-push runs are documented in [CLAUDE.md](./CLAUDE.md).
+Every PR opened from a branch in this repository is automatically
+reviewed by Claude Code's `/security-review` workflow. PRs from forks
+do not run the workflow because GitHub does not expose secrets to
+fork-triggered workflows; review those manually before merging.
+High-severity findings block merge; medium and low findings are
+commented for review. Local pre-push runs are documented in
+[CLAUDE.md](./CLAUDE.md).
 
-Found a vulnerability? Email {OWNER_CONTACT — set before publishing} or
-open a private security advisory at
+Found a vulnerability? Open a private
+security advisory at
 https://github.com/broots144/garageborrow/security/advisories/new.
 
 ## License
