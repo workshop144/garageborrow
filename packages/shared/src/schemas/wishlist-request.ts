@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IsoDate, IsoDateTime, NonNegInt, PhoneE164 } from "./common.js";
+import { HttpUrl, IsoDate, IsoDateTime, NonNegInt, PhoneE164 } from "./common.js";
 
 export const WishlistRequestStatusSchema = z.enum([
   "open",
@@ -18,7 +18,7 @@ export const WishlistRequestSchema = z.object({
   description: z.string().max(1000).optional(),
   desired_by: IsoDate.optional(),
   reason: z.string().max(500).optional(),
-  reference_url: z.string().url().optional(),
+  reference_url: HttpUrl.optional(),
   photo_url: z.string().min(1).optional(),
   status: WishlistRequestStatusSchema,
   acquired_item_id: z.string().min(1).optional(),

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { NotificationPrefsSchema, UserVisibilitySchema } from "@garageborrow/shared";
+import { HttpUrl, NotificationPrefsSchema, UserVisibilitySchema } from "@garageborrow/shared";
 import type { GarageMembership, TierName, User } from "@garageborrow/shared";
 
 import { mustUser } from "../lib/ctx.js";
@@ -221,7 +221,7 @@ meRoutes.post("/v1/me/notifications/read-all", async (c) => {
 });
 
 const PushSubSchema = z.object({
-  endpoint: z.string().url(),
+  endpoint: HttpUrl,
   keys: z.object({
     p256dh: z.string().min(1),
     auth: z.string().min(1),

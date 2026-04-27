@@ -1,23 +1,22 @@
 import type { NonprofitOrg } from "@garageborrow/shared";
 
+import { safeHref } from "../../lib/safeHref";
+
 type Props = {
   org: NonprofitOrg;
 };
 
 export function NonprofitCard({ org }: Props): JSX.Element {
-  const url = org.url ?? org.donate_url;
+  const url = safeHref(org.url ?? org.donate_url);
+  const logoSrc = safeHref(org.logo_url);
   return (
     <article
       className="flex flex-col gap-3 rounded-xl border border-workshop/15 dark:border-surface-light/10 bg-surface-light/60 dark:bg-workshop/40 p-4"
       data-testid={`nonprofit-${org.name}`}
     >
       <div className="flex items-center gap-3">
-        {org.logo_url ? (
-          <img
-            src={org.logo_url}
-            alt=""
-            className="h-12 w-12 rounded-lg object-contain bg-white p-1"
-          />
+        {logoSrc ? (
+          <img src={logoSrc} alt="" className="h-12 w-12 rounded-lg object-contain bg-white p-1" />
         ) : (
           <div
             aria-hidden="true"

@@ -16,3 +16,14 @@ export const TierNameSchema = z.enum(TIER_NAMES);
 
 export const NonNegInt = z.number().int().nonnegative();
 export const PosInt = z.number().int().positive();
+
+// Zod's `.url()` accepts any URL the WHATWG URL constructor parses, including
+// `javascript:`, `data:`, and `vbscript:` — which become stored XSS when the
+// value is later rendered as an anchor href. Use `HttpUrl` for any field that
+// might surface in the UI.
+export const HttpUrl = z
+  .string()
+  .url()
+  .refine((u) => /^https?:\/\//i.test(u), {
+    message: "must start with http:// or https://",
+  });

@@ -4,6 +4,7 @@ import { AppShell } from "../components/AppShell";
 import { useWishlistRequest } from "../hooks/useWishlistRequest";
 import { useWishlistVote } from "../hooks/useWishlistVote";
 import { formatRelative } from "../lib/dates";
+import { safeHref } from "../lib/safeHref";
 
 export default function WishlistDetail(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -74,10 +75,15 @@ export default function WishlistDetail(): JSX.Element {
         </p>
       ) : null}
 
-      {r.reference_url ? (
+      {r.reference_url && safeHref(r.reference_url) ? (
         <p className="mb-4 break-all text-sm">
           <span className="font-semibold">Reference: </span>
-          <a href={r.reference_url} target="_blank" rel="noopener noreferrer" className="underline">
+          <a
+            href={safeHref(r.reference_url)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
             {r.reference_url}
           </a>
         </p>

@@ -4,6 +4,7 @@ import { AdminLayout } from "../../components/Admin/AdminLayout";
 import { useGarageItems } from "../../hooks/useGarageItems";
 import { useWishlist, type WishlistFilter, type WishlistRow } from "../../hooks/useWishlist";
 import { useWishlistDecision } from "../../hooks/useWishlistDecision";
+import { safeHref } from "../../lib/safeHref";
 
 type Sort = "votes" | "date" | "desired";
 
@@ -229,10 +230,10 @@ function DecisionDrawer({ row, onClose }: { row: WishlistRow; onClose: () => voi
           {row.desired_by ? `needs by ${row.desired_by}` : "no rush"}
         </p>
         {row.description ? <p className="mb-3 text-sm">{row.description}</p> : null}
-        {row.reference_url ? (
+        {row.reference_url && safeHref(row.reference_url) ? (
           <p className="mb-3 break-all text-xs">
             <a
-              href={row.reference_url}
+              href={safeHref(row.reference_url)}
               target="_blank"
               rel="noopener noreferrer"
               className="underline"

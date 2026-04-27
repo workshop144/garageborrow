@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler, Next } from "hono";
+import { HttpUrl } from "@garageborrow/shared";
 import type { WishlistRequest } from "@garageborrow/shared";
 import { z } from "zod";
 
@@ -113,7 +114,7 @@ const CreateRequestSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .optional(),
     reason: z.string().max(500).optional(),
-    reference_url: z.string().url().optional(),
+    reference_url: HttpUrl.optional(),
     photo_url: z.string().min(1).optional(),
   })
   .strict();
