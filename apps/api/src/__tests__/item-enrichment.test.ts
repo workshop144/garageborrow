@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../index.js";
 import {
@@ -53,6 +53,15 @@ async function fetchDetail(id: string): Promise<EnrichedItem> {
 }
 
 describe("item enrichment — counts", () => {
+  // borrows_last_30d is relative to "now"; the fixtures assume 2026-04-26.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-04-26T12:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("single-unit item with no instances and no loans: available_count=1, total_count=1", async () => {
     seedItemRecord({ id: "single-free", name: "Single Free" });
 

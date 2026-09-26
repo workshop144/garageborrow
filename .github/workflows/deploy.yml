@@ -15,6 +15,10 @@ concurrency:
 
 jobs:
   deploy:
+    # Production AWS (OIDC deploy role, garageborrow-prod stack) is not set up
+    # for this repo yet. Set the repo variable DEPLOY_ENABLED=true once the
+    # AWS_DEPLOY_ROLE_ARN secret exists; until then the job is skipped.
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production

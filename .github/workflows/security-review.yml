@@ -20,11 +20,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # Skip cleanly (with a notice) until the ANTHROPIC_API_KEY secret is set.
+      - name: Check for API key
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Security review skipped: ANTHROPIC_API_KEY secret is not set for this repo."
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.key.outputs.configured == 'true'
         with:
           fetch-depth: 0
 
-      - uses: anthropics/claude-code-action@a9ac9eb3a874922a7e34246afae3914113c6626f # v1
+      - if: steps.key.outputs.configured == 'true'
+        uses: anthropics/claude-code-action@a9ac9eb3a874922a7e34246afae3914113c6626f # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -90,7 +105,7 @@ jobs:
             --allowedTools "Write,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(rg:*),Bash(grep:*)"
 
       - name: Gate on high-severity findings
-        if: always()
+        if: always() && steps.key.outputs.configured == 'true'
         run: |
           if [ ! -f findings.json ]; then
             echo "::error::Security review did not produce findings.json"
@@ -104,7 +119,7 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.key.outputs.configured == 'true'
         with:
           name: security-findings
           path: findings.json

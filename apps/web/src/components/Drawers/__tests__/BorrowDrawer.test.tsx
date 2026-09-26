@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Instance, ItemDetail } from "@garageborrow/shared";
@@ -97,7 +97,20 @@ function renderDrawer(props: { item: ItemDetail; instances: Instance[]; onSucces
   return { ...utils, onClose, onSuccess };
 }
 
+// Chip durations depend on the weekday ("next weekend"), so pin the clock to a
+// Sunday where "In a week" is the unambiguous match for a 7-day default.
+const FIXED_NOW = new Date("2026-04-26T12:00:00");
+function pinClock() {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FIXED_NOW);
+}
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("pickDefaultChip", () => {
+  beforeEach(pinClock);
+
   it("picks 'one-week' when default_duration_days is 7", () => {
     expect(pickDefaultChip(7).id).toBe("one-week");
   });
@@ -161,6 +174,7 @@ describe("BorrowDrawer state transitions", () => {
   });
 
   it("default chip is selected on initial render based on item.default_duration_days", () => {
+    pinClock();
     renderDrawer({
       item: makeItem({ default_duration_days: 7 }),
       instances: [makeInstance()],
