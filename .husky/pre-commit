@@ -1,1 +1,6 @@
+# core.hooksPath is .husky/_, so a global hooks directory (~/.config/git/hooks)
+# never runs on its own here. Call its guard first when this machine has one.
+guard="$HOME/.config/git/hooks/pre-commit"
+if [ -x "$guard" ]; then "$guard" "$@"; fi
+
 pnpm exec lint-staged
