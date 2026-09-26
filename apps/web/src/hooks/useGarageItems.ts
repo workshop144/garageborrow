@@ -12,7 +12,7 @@ export type GarageItem = Item & {
 
 type ItemsResponse = { items: GarageItem[] };
 
-export const DEFAULT_GARAGE_SLUG = import.meta.env.VITE_GARAGE_SLUG ?? "demo-garage";
+export const DEFAULT_GARAGE_SLUG = import.meta.env.VITE_GARAGE_SLUG || "demo-garage";
 
 export function useGarageItems(garageSlug: string = DEFAULT_GARAGE_SLUG) {
   return useQuery({

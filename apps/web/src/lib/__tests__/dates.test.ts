@@ -6,8 +6,8 @@ import {
   formatInAppZone,
   formatRelative,
   formatTime,
-  fromIndianapolis,
-  toIndianapolis,
+  fromAppZone,
+  toAppZone,
 } from "../dates";
 
 describe("APP_TIMEZONE", () => {
@@ -46,12 +46,12 @@ describe("formatRelative", () => {
   });
 });
 
-describe("toIndianapolis / fromIndianapolis (round-trip across DST)", () => {
-  it("a UTC instant survives toIndianapolis → fromIndianapolis", () => {
+describe("toAppZone / fromAppZone (round-trip across DST)", () => {
+  it("a UTC instant survives toAppZone → fromAppZone", () => {
     // March 8 2026 at 13:00 UTC = 09:00 EDT (the morning after spring-forward).
     const utc = "2026-03-08T13:00:00Z";
-    const local = toIndianapolis(utc);
-    const round = fromIndianapolis(local);
+    const local = toAppZone(utc);
+    const round = fromAppZone(local);
     expect(new Date(round).getTime()).toBe(new Date(utc).getTime());
   });
 

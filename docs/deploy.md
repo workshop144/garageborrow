@@ -115,7 +115,7 @@ For real billing alerts, use **AWS Budgets** (works regardless of region):
 Web DSN goes in Vercel as `VITE_SENTRY_DSN`, or as a build-time env var wherever you host the static bundle. API DSN goes into the SAM stack via the `SentryDsn` template parameter:
 
 ```bash
-make deploy SAM_PARAMS="--parameter-overrides Stage=prod SentryDsn=https://...@sentry.io/..."
+make deploy SAM_PARAMS="--parameter-overrides Stage=prod SiteUrl=https://yourgarage.com TenantName='Your Garage' SentryDsn=https://...@sentry.io/..."
 ```
 
 If left empty, the API Lambdas log a single boot warning per cold start and skip Sentry init — there's no failure path.

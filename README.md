@@ -104,14 +104,23 @@ The choices that keep it cheap:
 
 Environment variables consumed at deploy time:
 
-| Variable                 | Where       | Default        | Notes                                         |
-| ------------------------ | ----------- | -------------- | --------------------------------------------- |
-| `VITE_TENANT_NAME`       | web build   | Garage Borrow  | Long form for the manifest + page chrome      |
-| `VITE_TENANT_SHORT_NAME` | web build   | Garage         | Short form for the home-screen icon label     |
-| `VITE_API_BASE_URL`      | web build   | `/v1`          | Override only if API is on a different origin |
-| `VITE_SENTRY_DSN`        | web build   | unset          | Optional. When unset, Sentry init is a no-op  |
-| `SENTRY_DSN`             | API Lambdas | unset          | Same — set via `SentryDsn` SAM parameter      |
-| `STAGE`                  | API Lambdas | dev            | `dev` or `prod`                               |
+| Variable                    | Where       | Default            | Notes                                         |
+| --------------------------- | ----------- | ------------------ | --------------------------------------------- |
+| `VITE_TENANT_NAME`          | web build   | Garage Borrow      | Long form for the manifest + page chrome      |
+| `VITE_TENANT_SHORT_NAME`    | web build   | Garage             | Short form for the home-screen icon label     |
+| `VITE_API_BASE_URL`         | web build   | `/v1`              | Override only if API is on a different origin |
+| `VITE_SENTRY_DSN`           | web build   | unset              | Optional. When unset, Sentry init is a no-op  |
+| `VITE_SITE_URL`             | web build   | unset              | Canonical origin for `og:url`                 |
+| `VITE_TIMEZONE`             | web build   | `America/New_York` | IANA zone the garage lives in                 |
+| `VITE_TENANT_GOVERNING_LAW` | web build   | neutral text       | Terms of service: governing law               |
+| `VITE_TENANT_VENUE`         | web build   | neutral text       | Terms of service: where disputes are heard    |
+| `SENTRY_DSN`                | API Lambdas | unset              | Same — set via `SentryDsn` SAM parameter      |
+| `STAGE`                     | API Lambdas | dev                | `dev` or `prod`                               |
+
+The API stack takes the matching SAM parameters `SiteUrl` (required), `TenantName`
+and `AppTimezone`. In CI they come from repository variables (`SITE_URL`,
+`TENANT_NAME`, `APP_TIMEZONE`, `TENANT_GOVERNING_LAW`, `TENANT_VENUE`,
+`GARAGE_SLUG`), so a deployment's name and place never live in the code.
 
 Per-tenant customizations live on the `Garage` record in DynamoDB:
 

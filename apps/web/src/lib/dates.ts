@@ -1,12 +1,12 @@
 // Centralized date formatting. The server stores UTC ISO strings; the UI
-// always renders in America/New_York (the garage's home zone).
+// always renders in the garage's home zone (VITE_TIMEZONE, default America/New_York).
 // Keep all UI date code going through these helpers so DST edge cases and
 // timezone conversions stay in one place.
 
 import { format, formatDistanceStrict, parseISO } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 
-export const APP_TIMEZONE = "America/New_York";
+export const APP_TIMEZONE = import.meta.env.VITE_TIMEZONE || "America/New_York";
 
 function asDate(input: Date | string): Date {
   return typeof input === "string" ? parseISO(input) : input;
@@ -54,14 +54,14 @@ export function formatDateInput(input: Date | string): string {
   return formatInTimeZone(asDate(input), APP_TIMEZONE, "MMM d, yyyy");
 }
 
-// Wall-clock time in New York, e.g. "9:30 AM".
+// Wall-clock time in the app zone, e.g. "9:30 AM".
 export function formatTime(input: Date | string): string {
   return formatInTimeZone(asDate(input), APP_TIMEZONE, "h:mm a");
 }
 
 // Parse a free-form date string (yyyy-MM-dd or anything Date can read) into
 // a Date interpreted in the local browser zone — caller is responsible for
-// converting to UTC before sending to the server (use `fromIndianapolis`).
+// converting to UTC before sending to the server (use `fromAppZone`).
 export function parseInputDate(input: string): Date {
   // ISO date-only strings (yyyy-MM-dd) parse as UTC midnight under the
   // standard, which would shift the day in some zones. parseISO + locale
@@ -70,15 +70,15 @@ export function parseInputDate(input: string): Date {
   return parseISO(input);
 }
 
-// UTC ISO → Date positioned at the same wall-clock as New York. Useful
+// UTC ISO → Date positioned at the same wall-clock as the app zone. Useful
 // when feeding values into widgets that expect a "local" Date.
-export function toIndianapolis(utcDate: Date | string): Date {
+export function toAppZone(utcDate: Date | string): Date {
   return toZonedTime(asDate(utcDate), APP_TIMEZONE);
 }
 
-// Inverse: a Date that represents an New York wall-clock moment, back
+// Inverse: a Date that represents an app-zone wall-clock moment, back
 // to its true UTC ISO string for the server.
-export function fromIndianapolis(zonedDate: Date): string {
+export function fromAppZone(zonedDate: Date): string {
   return fromZonedTime(zonedDate, APP_TIMEZONE).toISOString();
 }
 

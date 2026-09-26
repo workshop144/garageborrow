@@ -9,7 +9,7 @@
 //
 //   2. Reset the per-day notifications_sent_today counter on every user
 //      record. The counter resets at user-local midnight; running this at
-//      03:00 ET is "close enough" for our single-tenant New York MVP.
+//      03:00 ET is "close enough" for our single-tenant MVP.
 //
 // We intentionally don't try to reuse the api Lambda's repo functions for
 // the cross-entity scrubbing — the repo layer is shaped for one-record-at-

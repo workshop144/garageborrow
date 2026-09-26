@@ -34,6 +34,20 @@ Parameters:
     Description: >-
       Sentry DSN used by every Lambda. Leave empty to disable error tracking;
       the Lambdas will skip init and emit a single warning per cold start.
+  SiteUrl:
+    Type: String
+    AllowedPattern: "^https://[^/]+$"
+    Description: >-
+      Public origin of this deployment, e.g. https://garage.example.org (no
+      trailing slash). Required: used for Cognito callback URLs and CORS.
+  TenantName:
+    Type: String
+    Default: Garage Borrow
+    Description: Garage name used in SMS messages.
+  AppTimezone:
+    Type: String
+    Default: America/New_York
+    Description: IANA zone the garage lives in (quiet hours, reminders).
 
 Globals:
   Function:
@@ -49,6 +63,8 @@ Globals:
         LOG_LEVEL: INFO
         NODE_OPTIONS: "--enable-source-maps"
         SENTRY_DSN: !Ref SentryDsn
+        TENANT_NAME: !Ref TenantName
+        APP_TIMEZONE: !Ref AppTimezone
 
 Resources:
   # ───────────────────────── DynamoDB ─────────────────────────
@@ -296,10 +312,10 @@ Resources:
       SupportedIdentityProviders:
         - COGNITO
       CallbackURLs:
-        - https://yourgarage.com/auth/callback
+        - !Sub "${SiteUrl}/auth/callback"
         - http://localhost:5173/auth/callback
       LogoutURLs:
-        - https://yourgarage.com/auth/logout
+        - !Sub "${SiteUrl}/auth/logout"
         - http://localhost:5173/auth/logout
       PreventUserExistenceErrors: ENABLED
 
@@ -472,7 +488,7 @@ Resources:
       # Auto-deploy to the default stage is on by default for AWS::Serverless::HttpApi.
       CorsConfiguration:
         AllowOrigins:
-          - https://yourgarage.com
+          - !Ref SiteUrl
           - http://localhost:5173
         AllowMethods:
           - GET
@@ -656,8 +672,8 @@ Resources:
           Type: Schedule
           Properties:
             # 13:00 UTC ≈ 9am EDT / 8am EST — close enough for a daily reminder.
-            # the state timezone is America/New_York (most of the state
-            # is on Eastern time); EventBridge cron does not support timezones,
+            # The garage runs on Eastern time (AppTimezone); EventBridge cron
+            # does not support timezones,
             # so we accept the seasonal one-hour drift.
             Schedule: cron(0 13 * * ? *)
             Name: !Sub garageborrow-daily-overdue-${Stage}

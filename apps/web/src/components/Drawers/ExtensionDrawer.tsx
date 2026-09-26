@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { addDays, formatISO } from "date-fns";
 
-import { formatDateInput, fromIndianapolis, toIndianapolis } from "../../lib/dates";
+import { formatDateInput, fromAppZone, toAppZone } from "../../lib/dates";
 import { useExtension } from "../../hooks/useExtension";
 import { Drawer } from "./Drawer";
 
@@ -38,7 +38,7 @@ export function ExtensionDrawer({
 
   const newReturnUtc = useMemo(() => {
     if (customDate) {
-      return fromIndianapolis(toIndianapolis(`${customDate}T20:00:00Z`));
+      return fromAppZone(toAppZone(`${customDate}T20:00:00Z`));
     }
     const chip = CHIPS.find((c) => c.id === chipId) ?? CHIPS[0]!;
     return formatISO(addDays(new Date(currentReturnAtUtc), chip.addDays));

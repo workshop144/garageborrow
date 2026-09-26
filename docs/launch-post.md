@@ -1,16 +1,16 @@
-# I built a tool-lending PWA for my neighborhood, and now you can fork it for yours
+# A tool-lending PWA built for one neighborhood, now ready to fork for yours
 
-_Draft — ~1500 words. Adjust personal details before posting to dev.to / Hacker News / your blog._
+_Draft, about 1500 words. Adjust details before posting to dev.to / Hacker News / a blog._
 
 ---
 
-Garage Borrow started in one person's garage in a small town. People I know come by and borrow things — drills, a log splitter, outgrown camping gear, a 3D printer I overcommitted to. The system that ran it for years was a group text and my own memory, and the system was breaking down. So I built **Garage Borrow**: an open-source neighborhood gear-lending PWA. I'm releasing it under MIT today, and I want to talk about why it exists, who it's for, what's in it, and how to spin one up for your own neighborhood in an afternoon.
+Garage Borrow started in one person's garage in a small town. People the owner knows come by and borrow things: drills, a log splitter, outgrown camping gear, a 3D printer that turned out to be one project too many. For years the system was a group text and the owner's memory, and that system was breaking down. So the owner built **Garage Borrow**, an open-source neighborhood gear-lending PWA, and released it under MIT. This post covers why it exists, who it is for, what is in it, and how to spin one up for your own neighborhood in an afternoon.
 
-## Why I built it
+## Why it exists
 
-The pitch is one paragraph: _neighbors already share tools. They do it badly, in group chats and DMs, and most of the friction is bookkeeping — who has what, when did they take it, did they return the saw or did Mike still have it from June._ If you've ever been the de facto lender on your block, you know the feeling. Things go out and don't come back; people are too embarrassed to ask twice; the social cost of nagging is real.
+The pitch is one paragraph: _neighbors already share tools. They do it badly, in group chats and DMs, and most of the friction is bookkeeping: who has what, when did they take it, did they return the saw or does Mike still have it from June._ Anyone who has been the de facto lender on their block knows the feeling. Things go out and don't come back; people are too embarrassed to ask twice; the social cost of nagging is real.
 
-Every commercial tool-library platform I looked at solved this with infrastructure that didn't fit: payments, multi-day rentals, fee schedules, insurance attestations, real names on file. I didn't want any of that. I wanted **a phone-numbers-only directory of who has what and a button that says "I have it now."** I built that.
+Every commercial tool-library platform the owner looked at solved this with infrastructure that didn't fit: payments, multi-day rentals, fee schedules, insurance attestations, real names on file. None of that was wanted. The goal was **a phone-numbers-only directory of who has what and a button that says "I have it now."** That is what got built.
 
 ## Who it's for
 
@@ -21,77 +21,77 @@ This is not a marketplace. It is not a startup. It is software for:
 - **Neighborhood gear-sharing collectives** that don't want to charge money or vet members in any formal way
 - **One person with a generous garage** and a few dozen tools to share with friends
 
-The minimum viable user count is one — me. The maximum is bounded by how many people the host actually wants to deal with personally, which in my experience is in the low hundreds.
+The minimum viable user count is one: the owner. The maximum is bounded by how many people the host actually wants to deal with personally, which in practice is in the low hundreds.
 
 The deliberate non-goals:
 
 - No money handling. Nothing changes hands financially. If your group rents tools for a fee, this isn't your tool.
 - No verification rituals. Phone-number sign-up, that's it. Trust comes from being someone the owner knows or someone vouched in by someone they know.
-- No native app. It's a PWA. iOS and Android both render it perfectly fine on the home screen. Adding a native app would triple the maintenance surface for zero new functionality.
+- No native app. It's a PWA. iOS and Android both render it fine on the home screen. A native app would triple the maintenance surface for zero new functionality.
 
 ## Technical highlights
 
-I'll spare you the README; you can read it in the repo. The choices that matter:
+The README covers the details. The choices that matter:
 
 ### Multi-tenant from day one
 
-Even though I'm only running one garage, the data model has been multi-tenant since the first commit. There's a `Garage` record with a slug, and every other record (`Item`, `Loan`, `Donation`, etc.) lives under `TENANT#<slug>` in DynamoDB. This is the only thing in the design that I'd call a bet on the future, and it's the cheapest possible bet — it costs me nothing today, and if someone forks the repo to run their own garage, the wiring is already there.
+Only one garage runs today, but the data model has been multi-tenant since the first commit. There's a `Garage` record with a slug, and every other record (`Item`, `Loan`, `Donation`, etc.) lives under `TENANT#<slug>` in DynamoDB. It is the only bet on the future in the design, and the cheapest possible one: it costs nothing today, and anyone who forks the repo to run their own garage finds the wiring already there. The tenant's name, site URL and time zone are build-time settings, not code.
 
 ### Built to run under $5/month
 
-Concrete cost target. Hard constraint. The whole stack is engineered to live inside the AWS free tier with about $2/month in unavoidable charges (Cognito SMS for OTP sign-in, plus the Route 53 hosted zone). The deliberate choices:
+A concrete cost target and a hard constraint. The whole stack lives inside the AWS free tier with about $2/month in unavoidable charges (Cognito SMS for OTP sign-in, plus the Route 53 hosted zone). The deliberate choices:
 
 - **HTTP API, not REST API.** $1.00/M requests vs $3.50/M.
 - **DynamoDB on-demand.** No provisioned capacity to leave on overnight.
-- **CloudFront price class 100.** US/CA/EU edges only. I don't need Sydney.
+- **CloudFront price class 100.** US/CA/EU edges only. Sydney isn't needed.
 - **No NAT, no VPC.** Saves $32/mo on NAT alone, which is a free-tier killer.
 - **arm64 Lambda.** 20% cheaper than x86 per ms.
-- **Phone-only auth via Cognito custom triggers.** Cognito's hosted UI is bloated and email-first; I rewired the three custom triggers (`define-auth-challenge`, `create-auth-challenge`, `verify-auth-challenge`) to do SMS OTP directly. No magic links, no email field, no password.
+- **Phone-only auth via Cognito custom triggers.** Cognito's hosted UI is bloated and email-first, so the three custom triggers (`define-auth-challenge`, `create-auth-challenge`, `verify-auth-challenge`) do SMS OTP directly. No magic links, no email field, no password.
 
 ### PWA with real iOS support
 
-I tested every PWA decision against an actual iPhone. Apple's PWA story is famously incomplete, but if you stay inside the lines (manifest, service worker, push) you can get a 95% native experience. The push subscription flow is the gnarliest part — iOS 16.4+ requires the user to install the app first, then enable notifications, in that order. The app-shortcuts-on-long-press is gravy and only Android picks them up, but it's two lines of manifest JSON.
+Every PWA decision was tested against an actual iPhone. Apple's PWA story is famously incomplete, but staying inside the lines (manifest, service worker, push) gets a 95% native experience. The push subscription flow is the gnarliest part: iOS 16.4+ requires the user to install the app first, then enable notifications, in that order. App shortcuts on long-press are gravy and only Android picks them up, but they are two lines of manifest JSON.
 
 ### Audit log on every admin write
 
-There's exactly one administrator: me. But I built an `AuditLog` write path on every privileged mutation anyway, with a diff renderer at `/admin/activity`. The reason is paranoia: if I ever delete something I shouldn't have, or accept a donation I meant to reject, I want a forensic record. It costs ~50 lines of code per route. It has already saved me twice.
+There's exactly one administrator. Every privileged mutation still writes an `AuditLog` entry, with a diff renderer at `/admin/activity`. The reason is paranoia: deleting something by mistake, or accepting a donation meant to be rejected, should leave a forensic record. It costs about 50 lines of code per route and has already paid for itself twice.
 
 ### Tier-based access
 
-Users belong to a `Membership` with a tier: `howdy` (default), `friend`, or `family`. Items can require a minimum tier. The log splitter is `family`-only because it's the kind of equipment where I want to know who's using it. The drill is `howdy`-only because honestly, what's the worst that happens. Tier promotion is manual: I promote people I trust, and the next time the user opens `/me` they get a one-time confetti overlay welcoming them. That single feature has been the one thing first-time users mention.
+Users belong to a `Membership` with a tier: `howdy` (default), `friend`, or `family`. Items can require a minimum tier. The log splitter is `family`-only because it's the kind of equipment where the owner wants to know who is using it. The drill is `howdy`-only because honestly, what's the worst that happens. Tier promotion is manual: the owner promotes people they trust, and the next time the user opens `/me` they get a one-time confetti overlay welcoming them. That single feature is the one thing first-time users mention.
 
 ### No abstractions until the second one
 
-I tried to keep this codebase boring. There's a `repo.ts` module with one function per data access pattern; there's no ORM, no GraphQL, no event bus. When I added donations, I copy-pasted the loan handlers and modified them. When I added wishlist and pay-it-forward, I did the same thing. Three near-identical handlers will eventually become an abstraction; two never will. The codebase is small enough that I can hold it all in my head at once, which is the only sustainable architecture I've ever found.
+The codebase is deliberately boring. There's a `repo.ts` module with one function per data access pattern; there's no ORM, no GraphQL, no event bus. Donations started as a copy of the loan handlers; wishlist and pay-it-forward followed the same path. Three near-identical handlers will eventually become an abstraction; two never will. The codebase is small enough to hold in one head at once, which is the only sustainable architecture there is.
 
-## What I learned
+## What running it taught
 
-A few things, in roughly the order they surprised me:
+Roughly in the order they were surprising:
 
-**1. The bookkeeping was 90% of the value.** I knew this in the abstract; I underestimated the magnitude. Once people stopped having to remember if they'd returned the saw, they stopped feeling guilty about borrowing again. Borrow volume tripled in the first month.
+**1. The bookkeeping was 90% of the value.** Known in the abstract, underestimated in magnitude. Once people stopped having to remember if they'd returned the saw, they stopped feeling guilty about borrowing again. Borrow volume tripled in the first month.
 
-**2. SMS sandboxing is a real cost.** Cognito starts in SMS sandbox mode and requires a service quota request to send to non-allowlisted numbers. The approval process took three business days for me. Build this into your launch plan.
+**2. SMS sandboxing is a real cost.** Cognito starts in SMS sandbox mode and requires a service quota request to send to non-allowlisted numbers. Approval took three business days. Build this into your launch plan.
 
-**3. iOS push setup is fiddly.** It works, but the order of operations is non-obvious and the failure modes are silent. The smoke test in `docs/smoke-test.md` documents the order I figured out.
+**3. iOS push setup is fiddly.** It works, but the order of operations is non-obvious and the failure modes are silent. The smoke test in `docs/smoke-test.md` documents the order that works.
 
-**4. Liability copy needs three tiers.** A drill and a log splitter cannot share confirmation copy. I ended up with `standard` / `power-tool` / `high-value` resolved from item tags. The high-value tier requires explicit owner approval before borrowing; the standard tier is essentially a single-tap acknowledgment.
+**4. Liability copy needs three tiers.** A drill and a log splitter cannot share confirmation copy. The app resolves `standard` / `power-tool` / `high-value` from item tags. The high-value tier requires explicit owner approval before borrowing; the standard tier is a single-tap acknowledgment.
 
-**5. People love the wood-grain background.** Every design decision was meant to evoke "nice neighbor's garage," not "SaaS dashboard." Permanent Marker for headings, warm gold accents, wood-grain on the splash screens. Reviewers consistently flag the visual style as the thing that made them trust the app, which says something both flattering and slightly distressing about the rest of the software industry.
+**5. People love the wood-grain background.** Every design decision was meant to evoke "nice neighbor's garage," not "SaaS dashboard." Permanent Marker for headings, warm gold accents, wood grain on the splash screens. Reviewers consistently flag the visual style as the thing that made them trust the app, which says something both flattering and slightly distressing about the rest of the software industry.
 
 ## Why open source
 
-I'm not trying to sell this. The marginal cost of letting one person borrow a drill is zero, but the marginal cost of running a tool library with payment processing and a customer support queue is enormous, which is why most attempts at this fold within a year. Garage Borrow's MIT license means anyone can deploy a copy for their own neighborhood, host it themselves, modify the tier names and the tool categories, and never owe me a thing.
+Nobody is selling this. The marginal cost of letting one person borrow a drill is zero, but the marginal cost of running a tool library with payment processing and a customer support queue is enormous, which is why most attempts at this fold within a year. The MIT license means anyone can deploy a copy for their own neighborhood, host it themselves, change the tier names and the tool categories, and owe nothing.
 
-If you're a small-town person with a garage full of stuff and the same problem I had, I want this to be useful to you specifically. The deploy guide in `docs/deploy.md` is a 13-step playbook you can follow in an afternoon. It includes domain setup, ACM certificates, the awkward Cognito SMS approval, generating real VAPID keys for web push, configuring AWS Budgets for billing alerts (because the SAM template's CloudWatch billing alarms only fire if you redeploy them to `us-east-1` — `EstimatedCharges` doesn't publish in other regions), and a one-command seed script that bootstraps your owner record.
+If you have a garage full of stuff and the same problem, this is meant to be useful to you specifically. The deploy guide in `docs/deploy.md` is a 13-step playbook for one afternoon. It covers domain setup, ACM certificates, the awkward Cognito SMS approval, generating real VAPID keys for web push, configuring AWS Budgets for billing alerts (the SAM template's CloudWatch billing alarms only fire if redeployed to `us-east-1`, since `EstimatedCharges` doesn't publish in other regions), and a one-command seed script that bootstraps your owner record.
 
-The whole thing — domain, deploy, first inventory, first borrow — should fit in a Saturday.
+The whole thing (domain, deploy, first inventory, first borrow) should fit in a Saturday.
 
 ## How to spin up your own garage
 
-Read [docs/deploy.md](./deploy.md) in the repo. The TL;DR:
+Read [docs/deploy.md](./deploy.md) in the repo. The short version:
 
 1. Buy a domain.
-2. `make deploy-guided` — guided SAM deploy, takes ~5 minutes.
+2. `make deploy-guided`: guided SAM deploy, about 5 minutes. Set `SiteUrl` to your domain and `TenantName` to your garage's name.
 3. Request the ACM cert in `us-east-1`, validate via Route 53, uncomment the alias block in `template.yaml`, redeploy.
 4. Request Cognito SMS production access (3 business days).
 5. Run `pnpm --filter @garageborrow/web exec tsx ../../scripts/gen-vapid.ts --stage prod`.
@@ -99,6 +99,6 @@ Read [docs/deploy.md](./deploy.md) in the repo. The TL;DR:
 7. Photograph 50 tools at `/admin/items`.
 8. Tell your neighbors.
 
-If something doesn't work, open an issue. I'll fix it. The repo is at <https://github.com/broots144/garageborrow>.
+If something doesn't work, open an issue. The repo is at <https://github.com/workshop144/garageborrow>.
 
-— Mr. Broots
+Mr. Broots

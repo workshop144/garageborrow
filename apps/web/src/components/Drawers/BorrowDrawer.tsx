@@ -2,12 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { addDays, formatISO, nextSaturday } from "date-fns";
 import type { Instance, ItemDetail } from "@garageborrow/shared";
 
-import {
-  formatDateInput,
-  formatInAppZone,
-  fromIndianapolis,
-  toIndianapolis,
-} from "../../lib/dates";
+import { formatDateInput, formatInAppZone, fromAppZone, toAppZone } from "../../lib/dates";
 import { liabilityCopyFor, resolveLiabilityTier, type LiabilityTier } from "../../lib/borrow-copy";
 import { ApiError } from "../../lib/api";
 import {
@@ -160,9 +155,7 @@ export function BorrowDrawer({
   const now = useMemo(() => new Date(), [open]);
 
   const chip = DATE_CHIPS.find((c) => c.id === chipId) ?? defaultChip;
-  const customDateUtc = customDate
-    ? fromIndianapolis(toIndianapolis(`${customDate}T20:00:00Z`))
-    : null;
+  const customDateUtc = customDate ? fromAppZone(toAppZone(`${customDate}T20:00:00Z`)) : null;
   const targetReturnUtc = customDateUtc ?? formatISO(chip.computeDate(now));
   const durationDays = customDateUtc
     ? daysBetween(now, new Date(customDateUtc))

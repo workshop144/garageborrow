@@ -33,6 +33,14 @@ jobs:
 
       - name: Build
         run: pnpm build
+        env:
+          # Per-deployment identity lives in repository variables, not in code.
+          VITE_TENANT_NAME: ${{ vars.TENANT_NAME }}
+          VITE_SITE_URL: ${{ vars.SITE_URL }}
+          VITE_TIMEZONE: ${{ vars.APP_TIMEZONE }}
+          VITE_TENANT_GOVERNING_LAW: ${{ vars.TENANT_GOVERNING_LAW }}
+          VITE_TENANT_VENUE: ${{ vars.TENANT_VENUE }}
+          VITE_GARAGE_SLUG: ${{ vars.GARAGE_SLUG }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -56,4 +64,7 @@ jobs:
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
-            --parameter-overrides Stage=prod
+            --parameter-overrides Stage=prod \
+              "SiteUrl=${{ vars.SITE_URL }}" \
+              "TenantName=${{ vars.TENANT_NAME || 'Garage Borrow' }}" \
+              "AppTimezone=${{ vars.APP_TIMEZONE || 'America/New_York' }}"

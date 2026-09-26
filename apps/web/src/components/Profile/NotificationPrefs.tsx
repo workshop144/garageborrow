@@ -121,7 +121,7 @@ export function NotificationPrefs({ value, onChange, saving }: Props): JSX.Eleme
       <fieldset className="rounded-xl border border-workshop/10 dark:border-surface-light/10 p-3">
         <legend className="px-2 text-xs uppercase tracking-wide opacity-70">Quiet hours</legend>
         <p className="mb-2 text-xs opacity-70">
-          We&apos;ll hold non-urgent texts during these hours (New York time).
+          We&apos;ll hold non-urgent texts during these hours (the garage&apos;s local time).
         </p>
         <QuietHoursPicker
           start={value.quiet_hours_start}

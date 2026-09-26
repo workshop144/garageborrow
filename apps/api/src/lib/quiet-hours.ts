@@ -1,13 +1,13 @@
 // Compute whether a given UTC instant falls within a user's quiet hours,
 // where quiet_hours_start / quiet_hours_end are HH:MM strings in the user's
 // local timezone. EventBridge fires our cron in UTC and SMS senders likewise
-// publish in UTC, so we resolve "is it 9pm in New York right now?" by
+// publish in UTC, so we resolve "is it 9pm in the garage's zone right now?" by
 // formatting the UTC instant in the target timezone.
 //
 // Quiet windows can wrap midnight ("21:00" → "08:00"). We handle that by
 // detecting end < start and inverting the inclusion check.
 
-const TIMEZONE = "America/New_York";
+const TIMEZONE = process.env["APP_TIMEZONE"] || "America/New_York";
 
 interface ZonedHm {
   hour: number;

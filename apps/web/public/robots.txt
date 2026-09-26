@@ -3,4 +3,3 @@ Disallow: /admin/
 Disallow: /me/
 Disallow: /onboarding
 Allow: /
-Sitemap: https://yourgarage.com/sitemap.xml

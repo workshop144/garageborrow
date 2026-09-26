@@ -10,6 +10,7 @@ import { generateOtp } from "../lib/otp.js";
 import { sendSms } from "../lib/sns.js";
 
 const EXPIRY_MS = 5 * 60 * 1000;
+const TENANT_NAME = process.env["TENANT_NAME"] || "Garage Borrow";
 
 export const handler: CreateAuthChallengeTriggerHandler = async (event) => {
   const phone = event.request.userAttributes["phone_number"];
@@ -20,7 +21,7 @@ export const handler: CreateAuthChallengeTriggerHandler = async (event) => {
   const code = generateOtp();
   const expiresAt = new Date(Date.now() + EXPIRY_MS).toISOString();
 
-  await sendSms(phone, `Your Demo Garage code: ${code}. Expires in 5 minutes.`);
+  await sendSms(phone, `Your ${TENANT_NAME} code: ${code}. Expires in 5 minutes.`);
 
   event.response.publicChallengeParameters = {
     phone_hint: phone.slice(-4),

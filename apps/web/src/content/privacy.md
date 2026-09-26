@@ -1,4 +1,4 @@
-# Demo Garage — Privacy Policy
+# {{tenant_name}} — Privacy Policy
 
 **Last updated: April 25, 2026**
 
@@ -8,7 +8,7 @@ Short version: we collect the least we can to make the app work, we don't sell o
 
 ## What we collect
 
-To make Demo Garage work, we need a few things about you:
+To make {{tenant_name}} work, we need a few things about you:
 
 - **Phone number** — for SMS verification and so we can text you about borrows. This is your account ID.
 - **Display name** — whatever you want to be called in the app. Defaults to "FirstName L." but you can change it.
@@ -99,7 +99,7 @@ That's local to your phone or browser. Not tracking.
 
 ## Kids
 
-Demo Garage is not designed for kids under 13, and we don't knowingly collect data from them. If you're under 18, you need a parent on the account, and the parent is responsible for the account and the data.
+{{tenant_name}} is not designed for kids under 13, and we don't knowingly collect data from them. If you're under 18, you need a parent on the account, and the parent is responsible for the account and the data.
 
 ---
 
@@ -125,7 +125,7 @@ If we change anything material about how data is handled, we'll notify you in th
 
 ## Contact
 
-For privacy questions, text Dad. If you don't have his number, you probably shouldn't be on the app — but we can also be reached at the contact info posted on yourgarage.com.
+For privacy questions, text Dad. If you don't have his number, you probably shouldn't be on the app — but we can also be reached at the contact info posted on {{site}}.
 
 ---
 

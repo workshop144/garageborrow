@@ -3,9 +3,9 @@ import { Link } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { NonprofitCard } from "../components/PayItForward/NonprofitCard";
 import { usePayForward } from "../hooks/usePayForward";
+import { TENANT_NAME } from "../lib/tenant";
 
-const DEFAULT_INTRO =
-  "Demo Garage takes no money — ever. If you want to give back in dollars instead of a borrowed mower returned with a full tank, here's where to point them.";
+const DEFAULT_INTRO = `${TENANT_NAME} takes no money — ever. If you want to give back in dollars instead of a borrowed mower returned with a full tank, here's where to point them.`;
 
 export default function PayItForward(): JSX.Element {
   const q = usePayForward();

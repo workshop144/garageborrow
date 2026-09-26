@@ -58,7 +58,7 @@ describe("create-auth-challenge", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.args[0].input.PhoneNumber).toBe("+15555550199");
     expect(calls[0]?.args[0].input.Message).toContain(code as string);
-    expect(calls[0]?.args[0].input.Message).toContain("Demo Garage");
+    expect(calls[0]?.args[0].input.Message).toContain("Garage Borrow");
   });
 
   it("sets expires_at roughly 5 minutes in the future", async () => {

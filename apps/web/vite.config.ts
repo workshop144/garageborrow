@@ -4,12 +4,24 @@ import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
-  const tenantName = env.VITE_TENANT_NAME ?? "Demo Garage";
-  const tenantShort = env.VITE_TENANT_SHORT_NAME ?? "Garage";
+  const tenantName = env.VITE_TENANT_NAME || "Garage Borrow";
+  const tenantShort = env.VITE_TENANT_SHORT_NAME || "Garage";
+  // Canonical URL for og:url; set per deployment, never committed.
+  const siteUrl = env.VITE_SITE_URL || "";
 
   return {
     plugins: [
       react(),
+      {
+        name: "tenant-og-url",
+        transformIndexHtml: (html: string) =>
+          siteUrl
+            ? html.replace(
+                '<meta property="og:site_name"',
+                `<meta property="og:url" content="${siteUrl.replace(/\/?$/, "/")}" />\n    <meta property="og:site_name"`,
+              )
+            : html,
+      },
       VitePWA({
         registerType: "prompt",
         // We hand-write src/sw.ts so we can attach a 'push' handler.
