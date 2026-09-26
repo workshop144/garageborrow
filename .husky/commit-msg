@@ -1,0 +1,3 @@
+# Run the global commit-msg guard (~/.config/git/hooks) when this machine has one.
+guard="$HOME/.config/git/hooks/commit-msg"
+if [ -x "$guard" ]; then exec "$guard" "$@"; fi

@@ -1,0 +1,4 @@
+# Run the global pre-push guard (~/.config/git/hooks) when this machine has one.
+# It reads the ref list on stdin, which husky passes through unchanged.
+guard="$HOME/.config/git/hooks/pre-push"
+if [ -x "$guard" ]; then exec "$guard" "$@"; fi
