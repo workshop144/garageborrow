@@ -46,11 +46,11 @@ function RouteFallback(): JSX.Element {
 }
 
 function ApiTokenBridge(): null {
-  const { getAccessToken } = useAuth();
+  const { getIdToken } = useAuth();
   useEffect(() => {
-    setAuthTokenProvider(getAccessToken);
+    setAuthTokenProvider(getIdToken);
     return () => setAuthTokenProvider(() => null);
-  }, [getAccessToken]);
+  }, [getIdToken]);
   return null;
 }
 

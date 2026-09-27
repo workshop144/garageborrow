@@ -51,7 +51,7 @@ Parameters:
 
 Globals:
   Function:
-    Runtime: nodejs20.x
+    Runtime: nodejs24.x
     Architectures:
       - arm64
     MemorySize: 512
@@ -169,6 +169,12 @@ Resources:
         - phone_number
       AutoVerifiedAttributes:
         - phone_number
+      # No self-service SignUp: the app never calls it, and an open SignUp sends an
+      # operator-paid verification SMS to any number and lets the caller set a
+      # password. Accounts are created by an admin (AdminCreateUser, message
+      # suppressed); sign-in is the custom SMS-code flow.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
       MfaConfiguration: "OFF" # SMS code IS the auth (custom auth flow); not MFA.
       Policies:
         PasswordPolicy:
@@ -302,7 +308,10 @@ Resources:
       ExplicitAuthFlows:
         - ALLOW_CUSTOM_AUTH # SMS-code-as-auth challenge flow
         - ALLOW_REFRESH_TOKEN_AUTH
-        - ALLOW_USER_SRP_AUTH # required to be present even if unused
+      # Users may not change their own phone_number (the identity the API trusts)
+      # or the garages attribute; only the display name is theirs to write.
+      WriteAttributes:
+        - name
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows:
         - code
