@@ -31,6 +31,29 @@ export function setAuthVerifier(v: Verifier | undefined): void {
   overrideVerifier = v;
 }
 
+// Identity is the verified phone number from a Cognito ID token. Access tokens carry
+// no phone claim (their `username` is the sub, since phone is the username
+// attribute), and an unverified phone_number is one the user set but never proved.
+export function claimsFromPayload(
+  payload: Record<string, unknown>,
+  expectedClient: string | undefined,
+): { phone: string; sub: string; clientId?: string } {
+  const sub = typeof payload.sub === "string" ? payload.sub : "";
+  const phone = typeof payload["phone_number"] === "string" ? payload["phone_number"] : "";
+  if (payload["token_use"] !== "id") {
+    throw new ApiError("unauthorized", "An ID token is required");
+  }
+  if (!sub || !phone || payload["phone_number_verified"] !== true) {
+    throw new ApiError("unauthorized", "Token missing a verified phone number");
+  }
+  const aud = payload.aud;
+  const tokenClient = Array.isArray(aud) ? (aud[0] as string | undefined) : (aud as string | undefined);
+  if (!tokenClient || (expectedClient && tokenClient !== expectedClient)) {
+    throw new ApiError("unauthorized", "Token issued for a different client");
+  }
+  return { phone, sub, clientId: tokenClient };
+}
+
 async function defaultVerify(
   token: string,
 ): Promise<{ phone: string; sub: string; clientId?: string }> {
@@ -38,27 +61,7 @@ async function defaultVerify(
   if (!userPoolId) throw new ApiError("internal_error", "USER_POOL_ID not configured");
   const issuer = `https://cognito-idp.${env.region()}.amazonaws.com/${userPoolId}`;
   const { payload } = await jwtVerify(token, getJwks(), { issuer });
-  const sub = typeof payload.sub === "string" ? payload.sub : "";
-  const username =
-    typeof payload["cognito:username"] === "string" ? (payload["cognito:username"] as string) : "";
-  const phoneClaim =
-    typeof payload["phone_number"] === "string" ? (payload["phone_number"] as string) : username;
-  if (!sub || !phoneClaim) {
-    throw new ApiError("unauthorized", "Token missing required claims");
-  }
-  const expectedClient = env.cognitoClientId();
-  const tokenClient =
-    typeof payload["client_id"] === "string"
-      ? (payload["client_id"] as string)
-      : Array.isArray(payload.aud)
-        ? payload.aud[0]
-        : (payload.aud as string | undefined);
-  if (expectedClient && tokenClient && tokenClient !== expectedClient) {
-    throw new ApiError("unauthorized", "Token issued for a different client");
-  }
-  return tokenClient
-    ? { phone: phoneClaim, sub, clientId: tokenClient }
-    : { phone: phoneClaim, sub };
+  return claimsFromPayload(payload, env.cognitoClientId());
 }
 
 function bearerToken(c: Context<AppEnv>): string | undefined {

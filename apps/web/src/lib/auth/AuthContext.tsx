@@ -22,7 +22,7 @@ type AuthContextValue = AuthState & {
   beginPhoneSignIn: (phoneE164: string) => Promise<void>;
   submitOtp: (code: string) => Promise<void>;
   signOut: () => void;
-  getAccessToken: () => string | null;
+  getIdToken: () => string | null;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -111,11 +111,12 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     });
   }, []);
 
-  const getAccessToken = useCallback(() => state.tokens?.accessToken ?? null, [state.tokens]);
+  // The API authorises on the ID token: it carries the verified phone number (the access token does not).
+  const getIdToken = useCallback(() => state.tokens?.idToken ?? null, [state.tokens]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, beginPhoneSignIn, submitOtp, signOut, getAccessToken }),
-    [state, beginPhoneSignIn, submitOtp, signOut, getAccessToken],
+    () => ({ ...state, beginPhoneSignIn, submitOtp, signOut, getIdToken }),
+    [state, beginPhoneSignIn, submitOtp, signOut, getIdToken],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
