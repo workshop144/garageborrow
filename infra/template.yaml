@@ -16,6 +16,10 @@ Description: >
 # ─────────────────────────────────────────────────────────────────────────────
 
 Parameters:
+  SmsDailyCap:
+    Type: Number
+    Default: 200
+    Description: Most sign-in texts sent per day across all users (operator-paid SMS).
   Stage:
     Type: String
     Default: dev
@@ -248,11 +252,20 @@ Resources:
       MemorySize: 256
       Timeout: 10
       ReservedConcurrentExecutions: 20
+      # SMS caps (per phone per hour, and SmsDailyCap per day) are counted in the
+      # table: InitiateAuth is public, so the API's own limits can be bypassed.
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref GarageBorrowTable
+          SMS_DAILY_CAP: !Ref SmsDailyCap
       Policies:
         - Statement:
             - Effect: Allow
               Action: sns:Publish
               Resource: "*"
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt GarageBorrowTable.Arn
 
   CreateAuthChallengeInvokePermission:
     Type: AWS::Lambda::Permission
@@ -598,14 +611,15 @@ Resources:
             - Effect: Allow
               Action: sns:Publish
               Resource: "*"
+            # AdminCreateUser + AdminSetUserPassword: POST /v1/auth/start creates the
+            # account for an invited phone (self-service SignUp is closed).
             - Effect: Allow
               Action:
                 - cognito-idp:AdminGetUser
                 - cognito-idp:AdminUpdateUserAttributes
+                - cognito-idp:AdminCreateUser
+                - cognito-idp:AdminSetUserPassword
               Resource: !GetAtt UserPool.Arn
-            - Effect: Allow
-              Action: ses:SendEmail
-              Resource: "*"
             - Effect: Allow
               Action: lambda:InvokeFunction
               Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:garageborrow-notifier-${Stage}

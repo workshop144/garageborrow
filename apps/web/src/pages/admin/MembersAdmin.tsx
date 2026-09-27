@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { GarageMembership } from "@garageborrow/shared";
 
 import { AdminLayout } from "../../components/Admin/AdminLayout";
+import { InvitesPanel } from "../../components/Admin/Members/InvitesPanel";
 import { MemberEditDrawer } from "../../components/Admin/Members/MemberEditDrawer";
 import { PromotionSuggestionsBanner } from "../../components/Admin/Members/PromotionSuggestionsBanner";
 import { useAdminMembers } from "../../hooks/useAdminMembers";
@@ -23,6 +24,8 @@ export default function MembersAdmin(): JSX.Element {
       <header className="mb-4">
         <h1 className="font-heading text-3xl text-gold-bright">Members</h1>
       </header>
+
+      <InvitesPanel />
 
       <PromotionSuggestionsBanner />
 

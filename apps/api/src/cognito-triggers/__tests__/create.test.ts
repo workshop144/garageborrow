@@ -3,11 +3,15 @@ import type { CreateAuthChallengeTriggerEvent } from "aws-lambda";
 import { mockClient } from "aws-sdk-client-mock";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { installDdbMock, resetDdbStore } from "../../__tests__/_setup.js";
 import { handler } from "../create-auth-challenge.js";
 
 const sns = mockClient(SNSClient);
 
 beforeEach(() => {
+  // The SMS caps count sends in the table.
+  resetDdbStore();
+  installDdbMock();
   sns.reset();
   sns.on(PublishCommand).resolves({ MessageId: "mid-1" });
 });
@@ -113,5 +117,22 @@ describe("create-auth-challenge", () => {
     ];
     await invoke(retry);
     expect(sns.commandCalls(PublishCommand)).toHaveLength(1);
+  });
+
+  it("texts no unknown number and leaves no valid answer", async () => {
+    const e = makeEvent();
+    e.request.userAttributes = {};
+    e.request.userNotFound = true;
+    const result = await invoke(e);
+    expect(sns.commandCalls(PublishCommand)).toHaveLength(0);
+    expect(result.response.privateChallengeParameters["code"]).toBeUndefined();
+    expect(result.response.publicChallengeParameters["phone_hint"]).toBe("0123");
+  });
+
+  it("stops texting a phone after 5 codes in an hour; the unsent code is unusable", async () => {
+    let last: CreateAuthChallengeTriggerEvent | undefined;
+    for (let i = 0; i < 6; i++) last = await invoke(makeEvent());
+    expect(sns.commandCalls(PublishCommand)).toHaveLength(5);
+    expect(last?.response.privateChallengeParameters["code"]).toBe("");
   });
 });

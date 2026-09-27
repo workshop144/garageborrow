@@ -9,7 +9,9 @@ import type {
   CreateAuthChallengeTriggerHandler,
 } from "aws-lambda";
 
+import { logger } from "../lib/logger.js";
 import { generateOtp } from "../lib/otp.js";
+import { bumpWindowCounter } from "../lib/repo.js";
 import { sendSms } from "../lib/sns.js";
 
 const EXPIRY_MS = 5 * 60 * 1000;
@@ -32,16 +34,48 @@ function previousCode(
   return { code, expiresAt };
 }
 
+// Hard caps on operator-paid texts. Cognito's InitiateAuth is a public API, so
+// /v1/auth/start's limits can be skipped by calling Cognito directly; these can't.
+export const SMS_PER_PHONE_PER_HOUR = 5;
+const SMS_DAILY_CAP = Number(process.env["SMS_DAILY_CAP"] || "200");
+
+async function smsAllowed(phone: string): Promise<boolean> {
+  const now = new Date();
+  const hour = now.toISOString().slice(0, 13);
+  const day = now.toISOString().slice(0, 10);
+  const expires = Math.floor(now.getTime() / 1000) + 2 * 86400;
+  const perPhone = await bumpWindowCounter("sms-phone", phone, hour, expires);
+  if (perPhone > SMS_PER_PHONE_PER_HOUR) {
+    logger.warn({ event: "sms_capped", scope: "phone" }, "per-phone SMS cap reached");
+    return false;
+  }
+  const total = await bumpWindowCounter("sms-total", "all", day, expires);
+  if (total > SMS_DAILY_CAP) {
+    logger.warn({ event: "sms_capped", scope: "daily" }, "daily SMS cap reached");
+    return false;
+  }
+  return true;
+}
+
 export const handler: CreateAuthChallengeTriggerHandler = async (event) => {
   const phone = event.request.userAttributes["phone_number"];
-  if (!phone) {
-    throw new Error("phone_number missing from userAttributes");
+  if (event.request.userNotFound || !phone) {
+    // Unknown number: same challenge shape, no SMS, no valid answer.
+    event.response.publicChallengeParameters = { phone_hint: (event.userName ?? "").slice(-4) };
+    event.response.privateChallengeParameters = {};
+    event.response.challengeMetadata = "NO_USER";
+    return event;
   }
 
   let otp = previousCode(event.request.session);
   if (!otp) {
     otp = { code: generateOtp(), expiresAt: new Date(Date.now() + EXPIRY_MS).toISOString() };
-    await sendSms(phone, `Your ${TENANT_NAME} code: ${otp.code}. Expires in 5 minutes.`);
+    if (await smsAllowed(phone)) {
+      await sendSms(phone, `Your ${TENANT_NAME} code: ${otp.code}. Expires in 5 minutes.`);
+    } else {
+      // Capped: no text goes out, and the unsent code must not be usable.
+      otp = { code: "", expiresAt: otp.expiresAt };
+    }
   }
 
   event.response.publicChallengeParameters = {

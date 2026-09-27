@@ -52,6 +52,28 @@ export function tenantMemberKey(garage_id: string, phone: string): DdbKey {
   return { pk: `TENANT#${garage_id}`, sk: `MEMBER#${phone}` };
 }
 
+// Invites are keyed by phone so sign-in can find them without knowing the
+// garage; GSI1 (byUser) lists a garage's pending invites for the owner.
+export function inviteKey(phone: string, garage_id: string): DdbKey {
+  assertNoHash("phone", phone);
+  assertNoHash("garage_id", garage_id);
+  return { pk: `INVITE#${phone}`, sk: `GARAGE#${garage_id}` };
+}
+
+export function gsi1InviteByGarage(garage_id: string, phone: string): Gsi1Attrs {
+  assertNoHash("garage_id", garage_id);
+  assertNoHash("phone", phone);
+  return { GSI1PK: `INVITES#${garage_id}`, GSI1SK: `INVITE#${phone}` };
+}
+
+// A user's per-garage profile row is found by phone through GSI1 (byUser),
+// alongside their loans and reservations; GSI1SK "USER#..." tells them apart.
+export function gsi1UserProfile(phone: string, garage_id: string): Gsi1Attrs {
+  assertNoHash("phone", phone);
+  assertNoHash("garage_id", garage_id);
+  return { GSI1PK: `USER#${phone}`, GSI1SK: `USER#${garage_id}` };
+}
+
 export function itemKey(garage_id: string, item_id: string): DdbKey {
   assertNoHash("garage_id", garage_id);
   assertNoHash("item_id", item_id);

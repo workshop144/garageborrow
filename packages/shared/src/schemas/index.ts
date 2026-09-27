@@ -16,3 +16,4 @@ export * from "./ai-interaction.js";
 export * from "./audit-log-entry.js";
 export * from "./wishlist-request.js";
 export * from "./wishlist-vote.js";
+export * from "./garage-invite.js";

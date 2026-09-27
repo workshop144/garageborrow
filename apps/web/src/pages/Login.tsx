@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth/AuthContext";
-import { api, ApiError } from "../lib/api";
+import { ApiError } from "../lib/api";
 import { formatAsYouType, toE164 } from "../lib/phone";
 
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -90,11 +90,10 @@ export default function Login(): JSX.Element {
     }
     setBusy(true);
     try {
-      const res = await api.post<{ status: string; retry_after_seconds: number }>(
-        "/auth/resend-otp",
-        { phone: e164 },
-      );
-      startCooldown(res.retry_after_seconds || RESEND_COOLDOWN_SECONDS);
+      // A new challenge: its code is the one this session will accept.
+      await beginPhoneSignIn(e164);
+      setCode("");
+      startCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         const detail = err.details as { retry_after_seconds?: number } | undefined;
@@ -139,7 +138,8 @@ export default function Login(): JSX.Element {
         ) : (
           <form onSubmit={onVerify} className="mt-6 space-y-3">
             <p className="text-sm">
-              Code sent to <span className="font-mono">{phoneInput}</span>.
+              If <span className="font-mono">{phoneInput}</span> has been invited to a garage, a
+              code is on its way. No text? Ask the garage owner to invite this number.
             </p>
             <label className="block text-sm font-medium">
               6-digit code
