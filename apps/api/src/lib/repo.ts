@@ -606,6 +606,23 @@ function rateLimitKey(bucket: string, key: string): { pk: string; sk: string } {
   return { pk: `RATELIMIT#${bucket}`, sk: key };
 }
 
+// Adds one to a per-key counter for the given window and returns the new count.
+export async function bumpWindowCounter(bucket: string, key: string, window: string): Promise<number> {
+  const k = rateLimitKey(bucket, `${key}#${window}`);
+  const r = await ddb().send(
+    new UpdateCommand({
+      TableName: table(),
+      Key: { PK: k.pk, SK: k.sk },
+      UpdateExpression: "ADD #n :one",
+      ExpressionAttributeNames: { "#n": "count" },
+      ExpressionAttributeValues: { ":one": 1 },
+      ReturnValues: "UPDATED_NEW",
+    }),
+  );
+  const n = (r.Attributes as { count?: unknown } | undefined)?.count;
+  return typeof n === "number" ? n : 1;
+}
+
 export async function getRateLimit(
   bucket: string,
   key: string,
