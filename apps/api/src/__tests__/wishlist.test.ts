@@ -339,3 +339,37 @@ describe("List sorting + my_vote", () => {
     expect(body.items.every((r) => r.my_vote)).toBe(true);
   });
 });
+
+describe("Wishlist phone privacy", () => {
+  it("shows other members' phones as last 4 only; the owner sees full numbers", async () => {
+    seedAll();
+    const app = createApp();
+    const { id } = await createReq(app, FAMILY_PHONE);
+    const vote = await app.request(`/v1/g/${GARAGE_ID}/wishlist/${id}/vote`, {
+      method: "POST",
+      headers: authHeader(FRIEND_PHONE),
+    });
+    expect(vote.status).toBe(200);
+
+    for (const path of [`/v1/g/${GARAGE_ID}/wishlist/${id}`, `/v1/g/${GARAGE_ID}/wishlist`]) {
+      const res = await app.request(path, { headers: authHeader(HOWDY_PHONE) });
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).not.toContain(FAMILY_PHONE);
+      expect(text).not.toContain(FRIEND_PHONE);
+      expect(text).toContain(`***${FAMILY_PHONE.slice(-4)}`);
+    }
+    const howdyVote = await app.request(`/v1/g/${GARAGE_ID}/wishlist/${id}/vote`, {
+      method: "POST",
+      headers: authHeader(HOWDY_PHONE),
+    });
+    expect(await howdyVote.text()).not.toContain(FAMILY_PHONE);
+
+    const owner = await app.request(`/v1/g/${GARAGE_ID}/wishlist/${id}`, {
+      headers: authHeader(OWNER_PHONE),
+    });
+    const ownerText = await owner.text();
+    expect(ownerText).toContain(FAMILY_PHONE);
+    expect(ownerText).toContain(FRIEND_PHONE);
+  });
+});

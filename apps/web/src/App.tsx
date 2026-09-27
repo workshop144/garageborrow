@@ -4,6 +4,7 @@ import { MotionConfig } from "framer-motion";
 import { Suspense, lazy, useEffect, useMemo } from "react";
 import { AuthProvider, useAuth } from "./lib/auth/AuthContext";
 import { ProtectedRoute } from "./lib/auth/ProtectedRoute";
+import { SessionCacheReset } from "./lib/auth/SessionCacheReset";
 import { ThemeProvider } from "./lib/theme/ThemeContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { createQueryClient } from "./lib/queryClient";
@@ -63,6 +64,7 @@ export default function App(): JSX.Element {
             <BrowserRouter>
               <AuthProvider>
                 <ApiTokenBridge />
+                <SessionCacheReset />
                 <Suspense fallback={<RouteFallback />}>
                   <Routes>
                     <Route path="/login" element={<Login />} />

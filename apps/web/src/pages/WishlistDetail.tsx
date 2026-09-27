@@ -123,8 +123,8 @@ export default function WishlistDetail(): JSX.Element {
           Voters
         </h2>
         <ul className="space-y-1 text-sm">
-          {voters.map((v) => (
-            <li key={v.phone} className="opacity-80">
+          {voters.map((v, i) => (
+            <li key={`${i}-${v.phone}`} className="opacity-80">
               {v.display_name ?? `Member ${v.phone.slice(-4)}`}
             </li>
           ))}

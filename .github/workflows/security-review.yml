@@ -16,7 +16,9 @@ concurrency:
 
 jobs:
   security-review:
-    if: github.event.pull_request.draft == false
+    # Same-repo PRs only: the reviewer holds the API key and can write PR comments,
+    # so it never runs on (or reads the discussion of) a fork's pull request.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -33,7 +35,7 @@ jobs:
             echo "::notice::Security review skipped: ANTHROPIC_API_KEY secret is not set for this repo."
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: steps.key.outputs.configured == 'true'
         with:
           fetch-depth: 0
@@ -118,7 +120,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.key.outputs.configured == 'true'
         with:
           name: security-findings

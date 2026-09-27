@@ -46,6 +46,25 @@ function wishlistEnabled(): MiddlewareHandler<AppEnv> {
 // /me/wishlist is cross-garage and only needs the auth middleware. Mount it
 // before the per-garage middleware so the :garage param checks don't fire.
 wishlistRoutes.use("/v1/me/wishlist", requireAuth());
+// Directory policy: members see only the last 4 digits of another member's phone.
+// The garage owner and the member themselves see full numbers.
+function maskPhone<T extends string | undefined>(phone: T, viewer: string, isOwner: boolean): T {
+  if (!phone || isOwner || phone === viewer) return phone;
+  return `***${phone.slice(-4)}` as T;
+}
+
+function forViewer<T extends Pick<WishlistRequest, "requester_phone" | "decided_by_phone">>(
+  req: T,
+  viewer: string,
+  isOwner: boolean,
+): T {
+  const out = { ...req, requester_phone: maskPhone(req.requester_phone, viewer, isOwner) };
+  if (req.decided_by_phone !== undefined) {
+    out.decided_by_phone = maskPhone(req.decided_by_phone, viewer, isOwner);
+  }
+  return out;
+}
+
 wishlistRoutes.get("/v1/me/wishlist", async (c) => {
   const user = mustUser(c);
   const params = parsePageParams(c);
@@ -61,7 +80,7 @@ wishlistRoutes.get("/v1/me/wishlist", async (c) => {
       const isMine = r.requester_phone === user.phone;
       const iVoted = mineRequestIds.has(r.id);
       if (!isMine && !iVoted) continue;
-      all.push({ ...r, my_vote: iVoted });
+      all.push(forViewer({ ...r, my_vote: iVoted }, user.phone, false));
     }
   }
   all.sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -100,7 +119,10 @@ wishlistRoutes.get("/v1/g/:garage/wishlist", async (c) => {
   });
   const myVotes = await listAllWishlistVotesForVoter(garage.id, user.phone);
   const mineRequestIds = new Set(myVotes.map((v) => v.request_id));
-  const decorated = filtered.map((r) => ({ ...r, my_vote: mineRequestIds.has(r.id) }));
+  const isOwner = garage.owner_phone === user.phone;
+  const decorated = filtered.map((r) =>
+    forViewer({ ...r, my_vote: mineRequestIds.has(r.id) }, user.phone, isOwner),
+  );
   const { page, next_cursor } = paginate(decorated, params);
   return c.json(next_cursor ? { items: page, next_cursor } : { items: page });
 });
@@ -168,15 +190,17 @@ wishlistRoutes.get("/v1/g/:garage/wishlist/:id", async (c) => {
   const req = await getWishlistRequest(garage.id, id);
   if (!req) throw new ApiError("not_found", "Wishlist request not found");
   const votes = await listWishlistVotes(garage.id, id);
+  const isOwner = garage.owner_phone === user.phone;
   // Voter list respects each voter's visibility setting — hidden voters are
-  // counted but not named.
+  // counted but not named — and shows other members' phones as last 4 only.
   const voters: Array<{ phone: string; display_name: string | null }> = [];
   for (const v of votes) {
     const u = await getUser(garage.id, v.voter_phone);
+    const phone = maskPhone(v.voter_phone, user.phone, isOwner);
     if (!u || u.visibility === "hidden") {
-      voters.push({ phone: v.voter_phone, display_name: null });
+      voters.push({ phone, display_name: null });
     } else {
-      voters.push({ phone: v.voter_phone, display_name: u.display_name });
+      voters.push({ phone, display_name: u.display_name });
     }
   }
   const requester = await getUser(garage.id, req.requester_phone);
@@ -184,7 +208,7 @@ wishlistRoutes.get("/v1/g/:garage/wishlist/:id", async (c) => {
     !requester || requester.visibility === "hidden" ? null : requester.display_name;
   const myVote = votes.some((v) => v.voter_phone === user.phone);
   return c.json({
-    request: { ...req, my_vote: myVote },
+    request: forViewer({ ...req, my_vote: myVote }, user.phone, isOwner),
     voters,
     requester_display_name: requesterDisplay,
   });
@@ -202,7 +226,10 @@ wishlistRoutes.post("/v1/g/:garage/wishlist/:id/vote", async (c) => {
   }
   const existing = await getWishlistVote(garage.id, id, user.phone);
   if (existing) {
-    return c.json({ request: { ...req, my_vote: true }, vote_count: req.vote_count });
+    return c.json({
+      request: forViewer({ ...req, my_vote: true }, user.phone, garage.owner_phone === user.phone),
+      vote_count: req.vote_count,
+    });
   }
   await putWishlistVote(garage.id, {
     request_id: id,
@@ -228,7 +255,11 @@ wishlistRoutes.post("/v1/g/:garage/wishlist/:id/vote", async (c) => {
     });
   }
   return c.json({
-    request: { ...req, vote_count: newCount, my_vote: true },
+    request: forViewer(
+      { ...req, vote_count: newCount, my_vote: true },
+      user.phone,
+      garage.owner_phone === user.phone,
+    ),
     vote_count: newCount,
   });
 });
@@ -242,12 +273,19 @@ wishlistRoutes.delete("/v1/g/:garage/wishlist/:id/vote", async (c) => {
   if (!req) throw new ApiError("not_found", "Wishlist request not found");
   const existing = await getWishlistVote(garage.id, id, user.phone);
   if (!existing) {
-    return c.json({ request: { ...req, my_vote: false }, vote_count: req.vote_count });
+    return c.json({
+      request: forViewer({ ...req, my_vote: false }, user.phone, garage.owner_phone === user.phone),
+      vote_count: req.vote_count,
+    });
   }
   await deleteWishlistVote(garage.id, id, user.phone);
   const newCount = await bumpWishlistVoteCount(req, -1);
   return c.json({
-    request: { ...req, vote_count: newCount, my_vote: false },
+    request: forViewer(
+      { ...req, vote_count: newCount, my_vote: false },
+      user.phone,
+      garage.owner_phone === user.phone,
+    ),
     vote_count: newCount,
   });
 });
