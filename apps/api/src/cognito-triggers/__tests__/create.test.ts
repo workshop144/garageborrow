@@ -70,4 +70,48 @@ describe("create-auth-challenge", () => {
     expect(expires).toBeGreaterThanOrEqual(before + 5 * 60 * 1000 - 1000);
     expect(expires).toBeLessThanOrEqual(after + 5 * 60 * 1000 + 1000);
   });
+
+  it("reuses the first code on a retry in the same sign-in (one SMS, not one per guess)", async () => {
+    const first = await invoke(makeEvent());
+    const code = first.response.privateChallengeParameters["code"] as string;
+
+    const retry = makeEvent();
+    retry.request.session = [
+      {
+        challengeName: "CUSTOM_CHALLENGE",
+        challengeResult: false,
+        challengeMetadata: first.response.challengeMetadata,
+      },
+    ];
+    const second = await invoke(retry);
+
+    expect(second.response.privateChallengeParameters["code"]).toBe(code);
+    expect(second.response.privateChallengeParameters["expires_at"]).toBe(
+      first.response.privateChallengeParameters["expires_at"],
+    );
+    expect(sns.commandCalls(PublishCommand)).toHaveLength(1);
+  });
+
+  it("sends a fresh code once the previous one has expired", async () => {
+    const retry = makeEvent();
+    retry.request.session = [
+      {
+        challengeName: "CUSTOM_CHALLENGE",
+        challengeResult: false,
+        challengeMetadata: `OTP_SMS|123456|${new Date(Date.now() - 1000).toISOString()}`,
+      },
+    ];
+    const result = await invoke(retry);
+    expect(sns.commandCalls(PublishCommand)).toHaveLength(1);
+    expect(result.response.challengeMetadata.startsWith("OTP_SMS|")).toBe(true);
+  });
+
+  it("ignores malformed session metadata and sends a new code", async () => {
+    const retry = makeEvent();
+    retry.request.session = [
+      { challengeName: "CUSTOM_CHALLENGE", challengeResult: false, challengeMetadata: "OTP_SMS" },
+    ];
+    await invoke(retry);
+    expect(sns.commandCalls(PublishCommand)).toHaveLength(1);
+  });
 });
