@@ -33,8 +33,9 @@ function withQuery(children: ReactNode): JSX.Element {
 }
 
 describe("DataExportButton", () => {
-  it("posts once, shows confirmation, and disables further presses", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ status: "queued" }));
+  it("downloads once, shows confirmation, and disables further presses", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ user: { phone: "+15550000000" } }));
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }));
     const user = userEvent.setup();
     render(withQuery(<DataExportButton />));
 
@@ -44,12 +45,12 @@ describe("DataExportButton", () => {
 
     const url = fetchMock.mock.calls[0]?.[0] as string;
     expect(url).toContain("/me/data-export");
-    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe("POST");
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe("GET");
 
-    expect(await screen.findByText(/sent to your phone/i)).toBeInTheDocument();
+    expect(await screen.findByText(/saved as garageborrow-export\.json/i)).toBeInTheDocument();
 
     // Button is now disabled and renamed; clicking should be a no-op.
-    const after = screen.getByRole("button", { name: /sent/i });
+    const after = screen.getByRole("button", { name: /downloaded/i });
     expect(after).toBeDisabled();
     await user.click(after);
     expect(fetchMock).toHaveBeenCalledTimes(1);

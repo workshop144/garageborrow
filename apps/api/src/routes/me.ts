@@ -21,7 +21,6 @@ import {
   putPushSubscription,
   putUser,
 } from "../lib/repo.js";
-import { sendDataExportEmail } from "../lib/ses.js";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
 import { idempotency, requireIdempotencyKey } from "../middleware/idempotency.js";
@@ -135,6 +134,9 @@ meRoutes.post("/v1/me/delete-request", requireIdempotencyKey(), async (c) => {
   return c.json({ scheduled_for_hard_delete_at: ts, status: "deletion_requested" });
 });
 
+// The export is returned to the signed-in caller as a JSON download. It used to be
+// emailed to a caller-chosen ?email= address (any recipient, via the operator's SES
+// sender); users have no verified email, so there is no address to bind it to.
 meRoutes.get("/v1/me/data-export", async (c) => {
   const user = mustUser(c);
   const primary = await getUserAnyGarage(user.phone);
@@ -144,13 +146,9 @@ meRoutes.get("/v1/me/data-export", async (c) => {
     exported_at: nowIso(),
     garages: primary.garages_member_of,
   };
-  const recipient = c.req.query("email") ?? `${user.phone.replace("+", "")}@example.invalid`;
-  await sendDataExportEmail({
-    to: recipient,
-    subject: "Your Garage Borrow data export",
-    body: JSON.stringify(exportPayload, null, 2),
-  });
-  return c.json({ status: "queued" });
+  c.header("Cache-Control", "no-store");
+  c.header("Content-Disposition", 'attachment; filename="garageborrow-export.json"');
+  return c.json(exportPayload);
 });
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
