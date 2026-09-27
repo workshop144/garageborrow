@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../index.js";
-import { MAX_UPLOAD_BYTES } from "../routes/uploads.js";
+import { MAX_UPLOAD_BYTES, MAX_UPLOADS_PER_DAY } from "../routes/uploads.js";
 import { FAMILY_PHONE, seedGarage, seedUser } from "./_fixtures.js";
 import { authHeader, installDdbMock, installFakeAuth, resetDdbStore } from "./_setup.js";
 
@@ -49,5 +49,15 @@ describe("upload signing", () => {
     expect(tooBig.status).toBe(400);
     const noSize = await sign({ kind: "tool_photo", content_type: "image/jpeg" }, "k3");
     expect(noSize.status).toBe(400);
+  });
+
+  it("stops signing after the daily per-user quota", async () => {
+    const photo = { kind: "tool_photo", content_type: "image/jpeg", content_length: 1_000 };
+    for (let i = 0; i < MAX_UPLOADS_PER_DAY; i++) {
+      const ok = await sign(photo, `q${i}`);
+      expect(ok.status).toBe(200);
+    }
+    const over = await sign(photo, "q-over");
+    expect(over.status).toBe(429);
   });
 });
