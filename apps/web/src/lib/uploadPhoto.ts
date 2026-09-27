@@ -11,6 +11,8 @@ export async function uploadPhoto(
   const sign = await api.post<SignResponse>("/uploads/sign", {
     kind,
     content_type: file.type,
+    // signed into the URL: S3 refuses a body of any other size
+    content_length: file.size,
   });
   const res = await fetch(sign.url, {
     method: "PUT",

@@ -15,9 +15,15 @@ export const uploadRoutes = new Hono<AppEnv>();
 
 uploadRoutes.use("/v1/uploads/sign", requireAuth(), idempotency());
 
+// A phone photo is a few MB; this is generous. The exact size is signed into the
+// URL (Content-Length), so S3 refuses any body of another size: without it a signed
+// URL accepted up to S3's 5 GB single-PUT limit at the operator's expense.
+export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+
 const SignSchema = z.object({
   kind: z.enum(["tool_photo", "donation_photo", "wishlist_photo"]),
   content_type: z.string().regex(/^image\/(png|jpe?g|webp|heic|heif)$/i),
+  content_length: z.number().int().positive().max(MAX_UPLOAD_BYTES),
 });
 
 uploadRoutes.post("/v1/uploads/sign", async (c) => {
@@ -29,7 +35,11 @@ uploadRoutes.post("/v1/uploads/sign", async (c) => {
     Bucket: env.imagesBucket(),
     Key: key,
     ContentType: body.content_type,
+    ContentLength: body.content_length,
   });
-  const url = await getSignedUrl(s3(), cmd, { expiresIn: 300 });
+  const url = await getSignedUrl(s3(), cmd, {
+    expiresIn: 300,
+    signableHeaders: new Set(["content-length", "content-type"]),
+  });
   return c.json({ url, key, expires_in: 300 });
 });
