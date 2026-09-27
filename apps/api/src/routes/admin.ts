@@ -4,11 +4,13 @@ import {
   IncidentStatusSchema,
   ItemSchema,
   NonprofitOrgSchema,
+  PhoneE164,
   TierLabelsSchema,
   TierNameSchema,
 } from "@garageborrow/shared";
 import type {
   AuditLogEntry,
+  GarageInvite,
   Garage,
   GarageMembership,
   IncidentReport,
@@ -24,16 +26,19 @@ import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import {
+  deleteInvite,
   getIncident,
   getLoan,
   getMembership,
   getUser,
   listAuditLogEntries,
   listIncidents,
+  listInvitesForGarage,
   listLoansByGarage,
   listMembers,
   putGarage,
   putIncident,
+  putInvite,
   putItem,
   putLoan,
   putMembership,
@@ -49,6 +54,71 @@ export const adminRoutes = new Hono<AppEnv>();
 // All /admin/* mutations are owner-only and audited. The audit middleware
 // is mounted broadly so any future admin route picks it up automatically.
 adminRoutes.use("/v1/g/:garage/admin/*", requireAuth(), ownerOnly(), audit());
+
+// ─────────────────────────── Invites ────────────────────────────
+//
+// Self-service sign-up is closed: a new number can only get an account through
+// an owner's invite (POST /v1/auth/start creates the Cognito user, POST
+// /v1/me/join turns the invite into a membership). Invites expire after
+// INVITE_TTL_DAYS and a garage holds at most MAX_PENDING_INVITES at once. Nothing
+// is texted here; the owner tells the neighbor to sign in.
+
+const INVITE_TTL_DAYS = 14;
+export const MAX_PENDING_INVITES = 200;
+
+const InviteBodySchema = z
+  .object({ phone: PhoneE164, tier: TierNameSchema.default("howdy") })
+  .strict();
+
+adminRoutes.get("/v1/g/:garage/admin/invites", async (c) => {
+  const garage = mustGarage(c);
+  const invites = await listInvitesForGarage(garage.id, Math.floor(Date.now() / 1000));
+  invites.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  return c.json({ invites });
+});
+
+adminRoutes.post("/v1/g/:garage/admin/invites", async (c) => {
+  const garage = mustGarage(c);
+  const user = c.get("user");
+  if (!user) throw new ApiError("unauthorized", "Authentication required");
+  const body = InviteBodySchema.parse(await c.req.json());
+  if (await getMembership(garage.id, body.phone)) {
+    throw new ApiError("conflict", "Already a member of this garage");
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const pending = await listInvitesForGarage(garage.id, now);
+  if (pending.length >= MAX_PENDING_INVITES && !pending.some((i) => i.phone === body.phone)) {
+    throw new ApiError("conflict", `At most ${MAX_PENDING_INVITES} pending invites`);
+  }
+  const invite: GarageInvite = {
+    garage_id: garage.id,
+    phone: body.phone,
+    tier: body.tier,
+    invited_by_phone: user.phone,
+    created_at: nowIso(),
+    expires_at: now + INVITE_TTL_DAYS * 86400,
+  };
+  await putInvite(invite);
+  setAuditDetails(c, {
+    action_type: "invite_created",
+    entity_type: "member",
+    entity_id: body.phone,
+    after_snapshot: invite,
+  });
+  return c.json({ invite }, 201);
+});
+
+adminRoutes.delete("/v1/g/:garage/admin/invites/:phone", async (c) => {
+  const garage = mustGarage(c);
+  const phone = PhoneE164.parse(c.req.param("phone"));
+  await deleteInvite(phone, garage.id);
+  setAuditDetails(c, {
+    action_type: "invite_revoked",
+    entity_type: "member",
+    entity_id: phone,
+  });
+  return c.json({ status: "revoked" });
+});
 
 // ─────────────────────────── Members ────────────────────────────
 

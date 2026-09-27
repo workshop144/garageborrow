@@ -70,3 +70,50 @@ export function useUpdateMember(garageSlug: string = DEFAULT_GARAGE_SLUG) {
     },
   });
 }
+
+// Invites: sign-up is invite-only, so an owner adds a neighbor's number here and
+// the neighbor then signs in with it.
+export type PendingInvite = {
+  phone: string;
+  tier: TierName;
+  created_at: string;
+  expires_at: number;
+};
+
+export function adminInvitesKey(garage: string): readonly unknown[] {
+  return ["admin", "invites", garage];
+}
+
+export function useAdminInvites(garageSlug: string = DEFAULT_GARAGE_SLUG) {
+  return useQuery({
+    queryKey: adminInvitesKey(garageSlug),
+    queryFn: ({ signal }) =>
+      api.get<{ invites: PendingInvite[] }>(`/g/${encodeURIComponent(garageSlug)}/admin/invites`, {
+        signal,
+      }),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateInvite(garageSlug: string = DEFAULT_GARAGE_SLUG) {
+  const qc = useQueryClient();
+  return useMutation<{ invite: PendingInvite }, Error, { phone: string; tier: TierName }>({
+    mutationFn: (body) =>
+      api.post<{ invite: PendingInvite }>(
+        `/g/${encodeURIComponent(garageSlug)}/admin/invites`,
+        body,
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: adminInvitesKey(garageSlug) }),
+  });
+}
+
+export function useRevokeInvite(garageSlug: string = DEFAULT_GARAGE_SLUG) {
+  const qc = useQueryClient();
+  return useMutation<{ status: string }, Error, string>({
+    mutationFn: (phone) =>
+      api.delete<{ status: string }>(
+        `/g/${encodeURIComponent(garageSlug)}/admin/invites/${encodeURIComponent(phone)}`,
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: adminInvitesKey(garageSlug) }),
+  });
+}

@@ -14,8 +14,11 @@ import {
   getNotification,
   getUser,
   getUserAnyGarage,
+  deleteInvite,
   listDonations,
+  listInvitesForPhone,
   listNotifications,
+  listUserProfiles,
   putMembership,
   putNotification,
   putPushSubscription,
@@ -86,6 +89,66 @@ meRoutes.get("/v1/me", async (c) => {
     tier: topTier,
     celebration_pending: celebrationPending,
   });
+});
+
+// ─────────────────────────── /v1/me/join ───────────────────────
+//
+// Turns the caller's pending invites into memberships (at the invited tier,
+// vouched by the inviting owner) and creates or updates their per-garage profile
+// rows. Called by the PWA right after sign-in; a no-op without invites. An
+// account scheduled for deletion accepts nothing.
+
+meRoutes.post("/v1/me/join", async (c) => {
+  const user = mustUser(c);
+  const now = Math.floor(Date.now() / 1000);
+  const ts = nowIso();
+  const profiles = await listUserProfiles(user.phone);
+  if (profiles.some((p) => p.deleted_at)) {
+    throw new ApiError("conflict", "Account is scheduled for deletion");
+  }
+  const joined: string[] = [];
+  for (const inv of await listInvitesForPhone(user.phone, now)) {
+    const garage = await getGarage(inv.garage_id);
+    if (garage && garage.status !== "closed_indefinitely") {
+      if (!(await getMembership(garage.id, user.phone))) {
+        await putMembership({
+          garage_id: garage.id,
+          user_phone: user.phone,
+          tier: inv.tier,
+          joined_at: ts,
+          vouched_by_phone: inv.invited_by_phone,
+          borrows_total: 0,
+          borrows_active: 0,
+          returns_on_time: 0,
+          returns_late: 0,
+          no_shows: 0,
+          ai_tokens_used_this_month: 0,
+          ai_tokens_used_total: 0,
+          celebration_pending: false,
+        });
+      }
+      joined.push(garage.id);
+    }
+    await deleteInvite(user.phone, inv.garage_id);
+  }
+  if (joined.length > 0) {
+    const garages = [...new Set([...profiles.flatMap((p) => p.garages_member_of), ...joined])];
+    const base: User = profiles[0] ?? {
+      phone: user.phone,
+      display_name: "New neighbor",
+      visibility: "visible",
+      garages_member_of: [],
+      notification_prefs: NotificationPrefsSchema.parse({}),
+      created_at: ts,
+      last_seen_at: ts,
+    };
+    for (const garageId of garages) {
+      // Keep each garage's own row (display name etc.); new garages copy the base.
+      const own = profiles.find((p) => (p as { PK?: string }).PK === `TENANT#${garageId}`);
+      await putUser(garageId, { ...(own ?? base), garages_member_of: garages });
+    }
+  }
+  return c.json({ joined });
 });
 
 const PatchMeSchema = z

@@ -181,6 +181,42 @@ async function main(): Promise<void> {
     }),
   );
   console.log(`✓ created owner Membership (${args.ownerPhone}) at tier 'family'`);
+
+  // The owner's profile row. /v1/me reads it (through GSI1), and POST
+  // /v1/auth/start creates a Cognito account only for a phone that has a profile
+  // or an invite, so this is what lets the owner sign in the first time.
+  await ddb.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        PK: `TENANT#${args.slug}`,
+        SK: `USER#${args.ownerPhone}`,
+        GSI1PK: `USER#${args.ownerPhone}`,
+        GSI1SK: `USER#${args.slug}`,
+        phone: args.ownerPhone,
+        display_name: "Owner",
+        visibility: "visible",
+        garages_member_of: [args.slug],
+        notification_prefs: {
+          sms_enabled: true,
+          push_enabled: true,
+          reminders: true,
+          waitlist_updates: true,
+          new_tools: true,
+          promotion_celebrations: true,
+          ai_ready_notify: false,
+          quiet_hours_start: "21:00",
+          quiet_hours_end: "08:00",
+        },
+        created_at: now,
+        last_seen_at: now,
+      },
+      ConditionExpression: "attribute_not_exists(PK)",
+    }),
+  );
+  console.log(
+    `✓ created owner profile (${args.ownerPhone}); sign in with that number to create the account`,
+  );
 }
 
 main().catch((err: unknown) => {

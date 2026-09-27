@@ -5,6 +5,11 @@
 //   - Last challenge succeeded: issue tokens.
 //   - 3 wrong codes: fail authentication.
 //   - Otherwise: issue another CUSTOM_CHALLENGE (user can retry).
+//
+// An unknown phone (userNotFound, from the client's PreventUserExistenceErrors)
+// goes through the same sequence: CreateAuth sends it no SMS and no answer is
+// ever correct, so sign-in fails the same way a wrong code does and the flow
+// never reveals whether a number has an account.
 
 import type { DefineAuthChallengeTriggerHandler } from "aws-lambda";
 

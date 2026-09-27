@@ -8,6 +8,8 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
+import { api } from "../api";
+import { captureError } from "../sentry";
 import { confirmOtp, refreshSession, signOut as cognitoSignOut, startSignIn } from "./cognito";
 import type { AuthTokens } from "./cognito";
 
@@ -69,7 +71,11 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     };
   }, []);
 
+  // Sign-up is invite-only: /auth/start creates the account for an invited number
+  // (and rate-limits texts), then Cognito's SMS-code challenge starts. Also used
+  // for "resend": a fresh challenge sends a fresh code for this session.
   const beginPhoneSignIn = useCallback(async (phoneE164: string) => {
+    await api.post("/auth/start", { phone: phoneE164 });
     await startSignIn(phoneE164);
     setState({
       tokens: null,
@@ -86,6 +92,15 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
         throw new Error("No pending phone sign-in.");
       }
       const tokens = await confirmOtp(phone, code);
+      // Accept any pending garage invites. The token provider only sees the new
+      // tokens after the next render, so the ID token is passed explicitly.
+      try {
+        await api.post("/me/join", undefined, {
+          headers: { Authorization: `Bearer ${tokens.idToken}` },
+        });
+      } catch (err) {
+        captureError(err, { url: "/me/join", method: "POST" });
+      }
       setState({
         tokens,
         username: phone,

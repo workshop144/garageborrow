@@ -12,11 +12,14 @@ import {
 import {
   auditLogKey,
   donationKey,
+  gsi1InviteByGarage,
   gsi1LoanByUser,
   gsi1ReservationByUser,
+  gsi1UserProfile,
   gsi3WishlistByVotes,
   incidentKey,
   instanceKey,
+  inviteKey,
   itemKey,
   loanKey,
   notificationKey,
@@ -33,6 +36,7 @@ import type {
   AuditLogEntry,
   DonationOffer,
   Garage,
+  GarageInvite,
   GarageMembership,
   IncidentReport,
   Instance,
@@ -83,23 +87,35 @@ export async function getUser(garage_id: string, phone: string): Promise<User | 
 
 export async function putUser(garage_id: string, u: User): Promise<void> {
   const k = tenantUserKey(garage_id, u.phone);
-  await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, u) }));
+  // Always write the GSI1 profile keys: getUserAnyGarage finds users through them,
+  // and a put without them made the row invisible to /v1/me.
+  await ddb().send(
+    new PutCommand({
+      TableName: table(),
+      Item: { ...withKey(k, u), ...gsi1UserProfile(u.phone, garage_id) },
+    }),
+  );
+}
+
+// Every per-garage profile row for this phone. GSI1PK "USER#<phone>" also holds
+// the user's loans and reservations, so the sort key prefix selects profiles.
+export async function listUserProfiles(phone: string): Promise<User[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      IndexName: "byUser",
+      KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
+      ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": "USER#" },
+    }),
+  );
+  return (r.Items ?? []) as User[];
 }
 
 export async function getUserAnyGarage(phone: string): Promise<User | undefined> {
   // Users are duplicated per tenant; for /v1/me we look up via the phone in
   // every garage they belong to. The "primary" record is whichever returns
   // first. Callers should subsequently fan out by garages_member_of.
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      IndexName: "byUser",
-      KeyConditionExpression: "GSI1PK = :pk",
-      ExpressionAttributeValues: { ":pk": `USER#${phone}` },
-      Limit: 1,
-    }),
-  );
-  return r.Items?.[0] as User | undefined;
+  return (await listUserProfiles(phone))[0];
 }
 
 // ─────────────────────────── Membership ───────────────────────
@@ -593,8 +609,8 @@ export async function putPushSubscription(p: PushSubscription, hash: string): Pr
 
 // ─────────────────────────── Rate limit ───────────────────────
 //
-// Generic per-key rate-limit record with a TTL. Used by /v1/auth/resend-otp
-// to gate per-phone resends to one-per-60s before hitting Cognito.
+// Generic per-key rate-limit record with a TTL. Used by /v1/auth/start to
+// gate per-phone sign-in starts to one-per-60s before hitting Cognito.
 
 interface RateLimitRecord {
   PK: string;
@@ -607,15 +623,23 @@ function rateLimitKey(bucket: string, key: string): { pk: string; sk: string } {
 }
 
 // Adds one to a per-key counter for the given window and returns the new count.
-export async function bumpWindowCounter(bucket: string, key: string, window: string): Promise<number> {
+// With expiresAtEpochSec the counter row carries the table TTL, so old windows
+// are cleaned up.
+export async function bumpWindowCounter(
+  bucket: string,
+  key: string,
+  window: string,
+  expiresAtEpochSec?: number,
+): Promise<number> {
   const k = rateLimitKey(bucket, `${key}#${window}`);
+  const ttl = expiresAtEpochSec !== undefined;
   const r = await ddb().send(
     new UpdateCommand({
       TableName: table(),
       Key: { PK: k.pk, SK: k.sk },
-      UpdateExpression: "ADD #n :one",
+      UpdateExpression: ttl ? "ADD #n :one SET expires_at = :exp" : "ADD #n :one",
       ExpressionAttributeNames: { "#n": "count" },
-      ExpressionAttributeValues: { ":one": 1 },
+      ExpressionAttributeValues: ttl ? { ":one": 1, ":exp": expiresAtEpochSec } : { ":one": 1 },
       ReturnValues: "UPDATED_NEW",
     }),
   );
@@ -649,4 +673,52 @@ export async function putRateLimit(
       Item: { PK: k.pk, SK: k.sk, expires_at: nowEpochSec + ttlSeconds },
     }),
   );
+}
+
+// ─────────────────────────── Invites ────────────────────────────
+
+export async function putInvite(inv: GarageInvite): Promise<void> {
+  const k = inviteKey(inv.phone, inv.garage_id);
+  await ddb().send(
+    new PutCommand({
+      TableName: table(),
+      Item: { ...withKey(k, inv), ...gsi1InviteByGarage(inv.garage_id, inv.phone) },
+    }),
+  );
+}
+
+// Unexpired invites for a phone, across garages. DynamoDB's TTL deletes lazily,
+// so expiry is also checked here.
+export async function listInvitesForPhone(
+  phone: string,
+  nowEpochSec: number,
+): Promise<GarageInvite[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: { ":pk": `INVITE#${phone}`, ":sk": "GARAGE#" },
+    }),
+  );
+  return ((r.Items ?? []) as GarageInvite[]).filter((i) => i.expires_at > nowEpochSec);
+}
+
+export async function listInvitesForGarage(
+  garage_id: string,
+  nowEpochSec: number,
+): Promise<GarageInvite[]> {
+  const r = await ddb().send(
+    new QueryCommand({
+      TableName: table(),
+      IndexName: "byUser",
+      KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
+      ExpressionAttributeValues: { ":pk": `INVITES#${garage_id}`, ":sk": "INVITE#" },
+    }),
+  );
+  return ((r.Items ?? []) as GarageInvite[]).filter((i) => i.expires_at > nowEpochSec);
+}
+
+export async function deleteInvite(phone: string, garage_id: string): Promise<void> {
+  const k = inviteKey(phone, garage_id);
+  await ddb().send(new DeleteCommand({ TableName: table(), Key: { PK: k.pk, SK: k.sk } }));
 }

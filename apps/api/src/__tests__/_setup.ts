@@ -202,6 +202,12 @@ export function installDdbMock(): void {
       if (indexName === "byUser") {
         const pkVal = values[":pk"];
         if (typeof pkVal !== "string" || it["GSI1PK"] !== pkVal) return false;
+        // "GSI1PK = :pk AND begins_with(GSI1SK, :sk)"
+        const skVal = values[":sk"];
+        if (typeof skVal === "string") {
+          const gsk = it["GSI1SK"];
+          if (typeof gsk !== "string" || !gsk.startsWith(skVal)) return false;
+        }
         return true;
       }
       // Primary table: KeyConditionExpression "PK = :pk AND begins_with(SK, :sk)"

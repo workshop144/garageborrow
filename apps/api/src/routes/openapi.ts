@@ -68,8 +68,15 @@ const PATHS: Record<string, Record<string, OpenApiPathItem>> = {
   "/v1/me/notifications/read-all": {
     post: { summary: "Mark all notifications as read", tags: ["me"] },
   },
-  "/v1/auth/resend-otp": {
-    post: { summary: "Resend SMS OTP for unconfirmed signup (public)", tags: ["public"] },
+  "/v1/auth/start": {
+    post: {
+      summary:
+        "Prepare SMS sign-in: creates the account for an invited phone (public, rate-limited)",
+      tags: ["public"],
+    },
+  },
+  "/v1/me/join": {
+    post: { summary: "Accept pending garage invites for the signed-in phone", tags: ["me"] },
   },
   "/v1/g/{garage}": { get: { summary: "Garage profile", tags: ["garage"] } },
   "/v1/g/{garage}/items": {
