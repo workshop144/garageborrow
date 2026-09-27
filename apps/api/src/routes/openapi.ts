@@ -54,7 +54,7 @@ const PATHS: Record<string, Record<string, OpenApiPathItem>> = {
     post: { summary: "Schedule account deletion", tags: ["me"] },
   },
   "/v1/me/data-export": {
-    get: { summary: "Email a JSON data export", tags: ["me"] },
+    get: { summary: "Download a JSON data export", tags: ["me"] },
   },
   "/v1/me/push-subscription": {
     post: { summary: "Register a web-push subscription", tags: ["me"] },

@@ -20,6 +20,5 @@ export const env = {
   vapidPublicKey: () => readOpt("VAPID_PUBLIC_KEY") ?? "",
   notifierFunctionName: () =>
     readOpt("NOTIFIER_FUNCTION_NAME") ?? `garageborrow-notifier-${read("STAGE", "dev")}`,
-  sesFromAddress: () => readOpt("SES_FROM_ADDRESS") ?? "no-reply@example.com",
   jwtBypass: () => readOpt("JWT_BYPASS") === "1",
 };

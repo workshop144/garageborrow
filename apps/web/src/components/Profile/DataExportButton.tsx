@@ -12,11 +12,11 @@ export function DataExportButton(): JSX.Element {
         disabled={exporter.isPending || done}
         className="rounded-xl border border-workshop/20 dark:border-surface-light/20 px-4 py-2 text-sm hover:bg-workshop/5 dark:hover:bg-surface-light/5 disabled:opacity-60"
       >
-        {exporter.isPending ? "Sending…" : done ? "Sent" : "Download my data"}
+        {exporter.isPending ? "Preparing…" : done ? "Downloaded" : "Download my data"}
       </button>
       {done ? (
         <p className="mt-2 text-xs opacity-80" role="status">
-          Sent to your phone via SMS link.
+          Saved as garageborrow-export.json.
         </p>
       ) : null}
       {exporter.isError ? (
