@@ -100,6 +100,16 @@ itemRoutes.use("/v1/g/:garage/incidents", requireAuth(), ownerOnly());
 // garage exceeds ~200 items, add a search GSI keyed on category +
 // available state, or move full-text to OpenSearch and keep DDB for the
 // item record itself.
+// Member-facing item shape. Items are stored with internal attributes (table
+// keys) and the donor's phone, which only owners may see (admin donation flow);
+// members get the display name for attribution, never the number.
+const MEMBER_HIDDEN_KEYS = new Set(["donated_by_phone", "PK", "SK"]);
+function toMemberItem<T extends object>(item: T): T {
+  return Object.fromEntries(
+    Object.entries(item).filter(([k]) => !MEMBER_HIDDEN_KEYS.has(k) && !/^GSI\d*(PK|SK)$/.test(k)),
+  ) as T;
+}
+
 itemRoutes.get("/v1/g/:garage/items", async (c) => {
   const garage = mustGarage(c);
   const membership = mustMembership(c);
@@ -144,7 +154,7 @@ itemRoutes.get("/v1/g/:garage/items", async (c) => {
         instancesByItem.get(it.id) ?? [],
         loansByItem.get(it.id) ?? [],
       );
-      return { ...it, access, ...counts };
+      return { ...toMemberItem(it), access, ...counts };
     })
     .filter((it) => it.access !== "hidden");
 
@@ -183,7 +193,7 @@ itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {
   const myIdx = ordered.findIndex((w) => w.borrower_phone === user.phone);
   const myEntry = myIdx >= 0 ? ordered[myIdx] : undefined;
   return c.json({
-    item: { ...item, access, ...counts },
+    item: { ...toMemberItem(item), access, ...counts },
     instances,
     status_pills: statusPills,
     handling_notes: item.handling_notes ?? "",

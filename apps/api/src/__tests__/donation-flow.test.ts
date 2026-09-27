@@ -4,6 +4,7 @@ import { createApp } from "../index.js";
 import { listAll } from "./_setup.js";
 import {
   FAMILY_PHONE,
+  FRIEND_PHONE,
   GARAGE_ID,
   OWNER_PHONE,
   seedGarage,
@@ -85,5 +86,32 @@ describe("Donation accept/decline", () => {
       (it) => typeof it["SK"] === "string" && (it["SK"] as string).startsWith("ITEM#"),
     );
     expect(itemRecords).toHaveLength(0);
+  });
+
+  it("never shows the donor's phone (or table keys) to other members", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    seedMembership(FAMILY_PHONE, "family");
+    seedUser(OWNER_PHONE, { display_name: "Owner" });
+    seedUser(FRIEND_PHONE);
+    seedMembership(FRIEND_PHONE, "friend");
+
+    const app = createApp();
+    const donationId = await submitDonation(app);
+    const decideRes = await app.request(`/v1/g/${GARAGE_ID}/admin/donations/${donationId}/decide`, {
+      method: "POST",
+      headers: { ...authHeader(OWNER_PHONE), "content-type": "application/json" },
+      body: JSON.stringify({ decision: "accept", item_overrides: { category: "tools" } }),
+    });
+    const { item } = (await decideRes.json()) as { item: { id: string } };
+
+    for (const path of [`/v1/g/${GARAGE_ID}/items`, `/v1/g/${GARAGE_ID}/items/${item.id}`]) {
+      const res = await app.request(path, { headers: authHeader(FRIEND_PHONE) });
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).not.toContain(FAMILY_PHONE);
+      expect(text).not.toContain("donated_by_phone");
+      expect(text).not.toMatch(/"(PK|SK)"/);
+    }
   });
 });
