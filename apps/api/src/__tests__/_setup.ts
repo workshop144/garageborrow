@@ -14,6 +14,7 @@ import {
   PutCommand,
   QueryCommand,
   ScanCommand,
+  TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { mockClient } from "aws-sdk-client-mock";
@@ -41,6 +42,10 @@ export function resetDdbStore(): void {
 
 export function seedItem(it: Item): void {
   store.items.set(keyOf(it), it);
+}
+
+export function deleteItem(pk: string, sk: string): void {
+  store.items.delete(`${pk}#${sk}`);
 }
 
 export function listAll(): Item[] {
@@ -107,6 +112,19 @@ function applyUpdate(item: Item, cmd: UpdateCommand): UpdateOutcome {
   return { next, attributes };
 }
 
+// DynamoDB's "=" compares maps and lists by value, not identity.
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  return (
+    ak.length === bk.length &&
+    ak.every((k) => deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
+  );
+}
+
 // ConditionExpression subset: AND-joined attribute_exists / attribute_not_exists /
 // "#name = :v" / "name = :v". A failed check throws like DynamoDB does.
 function checkCondition(
@@ -125,7 +143,7 @@ function checkCondition(
       const has = cur !== undefined && cur[names[ex[2]] ?? ex[2]] !== undefined;
       ok = ex[1] ? !has : has;
     } else if (eq && eq[1] && eq[2]) {
-      ok = cur !== undefined && cur[names[eq[1]] ?? eq[1]] === values[eq[2]];
+      ok = cur !== undefined && deepEqual(cur[names[eq[1]] ?? eq[1]], values[eq[2]]);
     } else {
       throw new Error(`mock: unsupported condition ${p}`);
     }
@@ -255,6 +273,34 @@ export function installDdbMock(): void {
     store.items.set(k, outcome.next);
     if (input.ReturnValues === "UPDATED_NEW") {
       return Promise.resolve({ Attributes: outcome.attributes });
+    }
+    return Promise.resolve({});
+  });
+
+  // All-or-nothing: every condition is checked before any write is applied.
+  mock.on(TransactWriteCommand).callsFake((input) => {
+    const ops = input.TransactItems ?? [];
+    try {
+      for (const op of ops) {
+        const c = op.Delete ?? op.Put ?? op.Update ?? op.ConditionCheck;
+        if (!c) continue;
+        const key = op.Put ? keyOf(op.Put.Item as Item) : `${c.Key?.["PK"]}#${c.Key?.["SK"]}`;
+        checkCondition(
+          store.items.get(key),
+          c.ConditionExpression,
+          c.ExpressionAttributeValues ?? {},
+          c.ExpressionAttributeNames ?? {},
+        );
+      }
+    } catch {
+      const err = new Error("Transaction cancelled");
+      err.name = "TransactionCanceledException";
+      throw err;
+    }
+    for (const op of ops) {
+      if (op.Delete) store.items.delete(`${op.Delete.Key?.["PK"]}#${op.Delete.Key?.["SK"]}`);
+      if (op.Put) store.items.set(keyOf(op.Put.Item as Item), op.Put.Item as Item);
+      if (op.Update) throw new Error("mock: TransactWrite Update not supported");
     }
     return Promise.resolve({});
   });
