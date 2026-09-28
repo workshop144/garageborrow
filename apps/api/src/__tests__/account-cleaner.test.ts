@@ -7,9 +7,16 @@ import {
   waitlistKey,
 } from "@garageborrow/shared";
 
-import { pseudonymFor, runCleanup, setCognitoClient } from "../account-cleaner.js";
-import { FAMILY_PHONE, GARAGE_ID, seedGarage, seedMembership, seedUser } from "./_fixtures.js";
-import { installDdbMock, listAll, resetDdbStore, seedItem } from "./_setup.js";
+import { pseudonymFor, runCleanup, scrubPhone, setCognitoClient } from "../account-cleaner.js";
+import {
+  FAMILY_PHONE,
+  GARAGE_ID,
+  OWNER_PHONE,
+  seedGarage,
+  seedMembership,
+  seedUser,
+} from "./_fixtures.js";
+import { installDdbMock, listAll, onNextScan, resetDdbStore, seedItem } from "./_setup.js";
 
 beforeEach(() => {
   resetDdbStore();
@@ -132,5 +139,54 @@ describe("account-cleaner", () => {
     expect(
       (updated as { notifications_sent_today?: number } | undefined)?.notifications_sent_today,
     ).toBe(0);
+  });
+
+  it("scrubs the phone from derived copies: donated items, audit snapshots, keyed rows", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE, { deleted_at: "2026-03-01T12:00:00Z" });
+    seedMembership(FAMILY_PHONE, "family");
+    const pk = `TENANT#${GARAGE_ID}`;
+    seedItem({ PK: pk, SK: "ITEM#donated-1", id: "donated-1", donated_by_phone: FAMILY_PHONE });
+    seedItem({
+      PK: pk,
+      SK: "AUDIT#2026-03-02#a1",
+      id: "a1",
+      actor_phone: OWNER_PHONE,
+      before_snapshot: { donor_phone: FAMILY_PHONE, tags: ["x", FAMILY_PHONE] },
+      after_snapshot: { item: { donated_by_phone: FAMILY_PHONE } },
+    });
+    const wk = waitlistKey(GARAGE_ID, "item-1", "2026-03-02T12:00:00Z", FAMILY_PHONE);
+    seedItem({ PK: wk.pk, SK: wk.sk, item_id: "item-1", borrower_phone: FAMILY_PHONE });
+
+    await runCleanup(new Date("2026-04-26T03:00:00Z"));
+
+    const all = listAll();
+    expect(JSON.stringify(all)).not.toContain(FAMILY_PHONE);
+    const audit = all.find((r) => r.SK === "AUDIT#2026-03-02#a1");
+    expect(audit?.["actor_phone"]).toBe(OWNER_PHONE);
+    expect(JSON.stringify(audit)).toContain(pseudonymFor(FAMILY_PHONE));
+  });
+
+  it("resets the counter without rewriting the rest of a profile changed mid-sweep", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    const userKey = tenantUserKey(GARAGE_ID, FAMILY_PHONE);
+    const row = listAll().find((r) => r.PK === userKey.pk && r.SK === userKey.sk);
+    if (!row) throw new Error("seeded user not found");
+    row["notifications_sent_today"] = 4;
+    // The sweep's Scan of users (the second Scan) returns the old snapshot; the
+    // member renames themselves before the reset write lands.
+    onNextScan(() => onNextScan(() => seedItem({ ...row, display_name: "Renamed mid-sweep" })));
+    await runCleanup(new Date("2026-04-26T03:00:00Z"));
+    const updated = listAll().find((r) => r.PK === userKey.pk && r.SK === userKey.sk);
+    expect(updated?.["display_name"]).toBe("Renamed mid-sweep");
+    expect(updated?.["notifications_sent_today"]).toBe(0);
+  });
+
+  it("scrubs whole numbers only, not a prefix of a longer one", () => {
+    expect(scrubPhone(["+15555550100", "+155555501009"], "+15555550100", "X")).toEqual([
+      "X",
+      "+155555501009",
+    ]);
   });
 });

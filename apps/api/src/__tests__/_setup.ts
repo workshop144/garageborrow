@@ -35,6 +35,8 @@ function keyOf(it: { PK: string; SK: string }): string {
 
 export function resetDdbStore(): void {
   store.items.clear();
+  queryPageSize = Infinity;
+  afterNextScan = undefined;
 }
 
 export function seedItem(it: Item): void {
@@ -51,27 +53,102 @@ interface UpdateOutcome {
   attributes: Record<string, unknown>;
 }
 
+function resolvePath(raw: string, names: Record<string, string>): string[] {
+  return raw.split(".").map((seg) => names[seg.trim()] ?? seg.trim());
+}
+
+function setPath(item: Record<string, unknown>, path: string[], value: unknown): void {
+  let cur: Record<string, unknown> = item;
+  for (const seg of path.slice(0, -1)) {
+    const next = cur[seg];
+    if (typeof next !== "object" || next === null) throw new Error(`mock: no map at ${seg}`);
+    cur[seg] = { ...(next as Record<string, unknown>) };
+    cur = cur[seg] as Record<string, unknown>;
+  }
+  cur[path[path.length - 1] as string] = value;
+}
+
 function applyUpdate(item: Item, cmd: UpdateCommand): UpdateOutcome {
   const expr = cmd.input.UpdateExpression ?? "";
   const values = cmd.input.ExpressionAttributeValues ?? {};
   const names = cmd.input.ExpressionAttributeNames ?? {};
   const next = { ...item };
   const attributes: Record<string, unknown> = {};
-  // ADD supports both "ADD field :delta" and multiple field/delta pairs.
-  // Only the single-field shape is used in the codebase today.
-  const addMatch = /ADD\s+(#?\w+)\s+(:\w+)/.exec(expr);
-  if (addMatch && addMatch[1] && addMatch[2]) {
-    const rawName = addMatch[1];
-    const rawVal = addMatch[2];
-    const field = names[rawName] ?? rawName;
-    const delta = values[rawVal];
-    if (typeof delta === "number") {
-      const current = typeof next[field] === "number" ? (next[field] as number) : 0;
-      next[field] = current + delta;
-      attributes[field] = next[field];
+  // Clauses: "SET a = :v, #b.#c = :w", "ADD n :d", "REMOVE x, y", in any order.
+  const clauses = expr.split(/\b(?=SET\b|ADD\b|REMOVE\b)/);
+  for (const clause of clauses) {
+    const m = /^(SET|ADD|REMOVE)\s+([\s\S]*)$/.exec(clause.trim());
+    if (!m || !m[1] || !m[2]) continue;
+    for (const part of m[2]
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)) {
+      if (m[1] === "SET") {
+        const [lhs, rhs] = part.split("=").map((x) => x.trim());
+        if (!lhs || !rhs) continue;
+        const path = resolvePath(lhs, names);
+        setPath(next, path, values[rhs]);
+        attributes[path[0] as string] = next[path[0] as string];
+      } else if (m[1] === "ADD") {
+        const [rawName, rawVal] = part.split(/\s+/);
+        if (!rawName || !rawVal) continue;
+        const field = names[rawName] ?? rawName;
+        const delta = values[rawVal];
+        if (typeof delta === "number") {
+          const current = typeof next[field] === "number" ? (next[field] as number) : 0;
+          next[field] = current + delta;
+          attributes[field] = next[field];
+        }
+      } else {
+        delete next[resolvePath(part, names)[0] as string];
+      }
     }
   }
   return { next, attributes };
+}
+
+// ConditionExpression subset: AND-joined attribute_exists / attribute_not_exists /
+// "#name = :v" / "name = :v". A failed check throws like DynamoDB does.
+function checkCondition(
+  cur: Item | undefined,
+  expr: string | undefined,
+  values: Record<string, unknown>,
+  names: Record<string, string>,
+): void {
+  if (!expr) return;
+  for (const raw of expr.split(/\s+AND\s+/i)) {
+    const p = raw.trim();
+    let ok: boolean;
+    const ex = /^attribute_(not_)?exists\((#?\w+)\)$/.exec(p);
+    const eq = /^(#?\w+)\s*=\s*(:\w+)$/.exec(p);
+    if (ex && ex[2]) {
+      const has = cur !== undefined && cur[names[ex[2]] ?? ex[2]] !== undefined;
+      ok = ex[1] ? !has : has;
+    } else if (eq && eq[1] && eq[2]) {
+      ok = cur !== undefined && cur[names[eq[1]] ?? eq[1]] === values[eq[2]];
+    } else {
+      throw new Error(`mock: unsupported condition ${p}`);
+    }
+    if (!ok) {
+      const err = new Error("The conditional request failed");
+      err.name = "ConditionalCheckFailedException";
+      throw err;
+    }
+  }
+}
+
+// Page size for Query responses (DynamoDB returns at most 1 MB per page). Tests
+// shrink it to prove that callers follow LastEvaluatedKey.
+let queryPageSize = Infinity;
+export function setQueryPageSize(n: number): void {
+  queryPageSize = n;
+}
+
+// Runs once, right after the next Scan computes its result: lets a test make a
+// concurrent write land between a reader's Scan and its follow-up write.
+let afterNextScan: (() => void) | undefined;
+export function onNextScan(fn: () => void): void {
+  afterNextScan = fn;
 }
 
 function evalFilter(
@@ -143,18 +220,36 @@ export function installDdbMock(): void {
 
   mock.on(PutCommand).callsFake((input) => {
     const item = input.Item as Item;
+    checkCondition(
+      store.items.get(keyOf(item)),
+      input.ConditionExpression,
+      input.ExpressionAttributeValues ?? {},
+      input.ExpressionAttributeNames ?? {},
+    );
     store.items.set(keyOf(item), item);
     return Promise.resolve({});
   });
 
   mock.on(DeleteCommand).callsFake((input) => {
     const k = `${input.Key.PK}#${input.Key.SK}`;
+    checkCondition(
+      store.items.get(k),
+      input.ConditionExpression,
+      input.ExpressionAttributeValues ?? {},
+      input.ExpressionAttributeNames ?? {},
+    );
     store.items.delete(k);
     return Promise.resolve({});
   });
 
   mock.on(UpdateCommand).callsFake((input) => {
     const k = `${input.Key.PK}#${input.Key.SK}`;
+    checkCondition(
+      store.items.get(k),
+      input.ConditionExpression,
+      input.ExpressionAttributeValues ?? {},
+      input.ExpressionAttributeNames ?? {},
+    );
     const cur = store.items.get(k) ?? ({ PK: input.Key.PK, SK: input.Key.SK } as Item);
     const outcome = applyUpdate(cur, new UpdateCommand(input));
     store.items.set(k, outcome.next);
@@ -170,6 +265,9 @@ export function installDdbMock(): void {
     const filtered = all.filter((it) =>
       evalFilter(it, input.FilterExpression ?? undefined, values),
     );
+    const hook = afterNextScan;
+    afterNextScan = undefined;
+    hook?.();
     return Promise.resolve({ Items: filtered });
   });
 
@@ -220,10 +318,19 @@ export function installDdbMock(): void {
       }
       return true;
     });
-    const filtered = items.filter((it) =>
+    // Paginate before filtering, as DynamoDB does.
+    const startKey = input.ExclusiveStartKey as { PK: string; SK: string } | undefined;
+    const from = startKey ? items.findIndex((it) => keyOf(it) === keyOf(startKey)) + 1 : 0;
+    const pageItems = items.slice(from, from + queryPageSize);
+    const last = pageItems[pageItems.length - 1];
+    const more = from + pageItems.length < items.length && last !== undefined;
+    const filtered = pageItems.filter((it) =>
       evalFilter(it, input.FilterExpression ?? undefined, values),
     );
-    return Promise.resolve({ Items: filtered });
+    return Promise.resolve({
+      Items: filtered,
+      ...(more ? { LastEvaluatedKey: { PK: last.PK, SK: last.SK } } : {}),
+    });
   });
 }
 

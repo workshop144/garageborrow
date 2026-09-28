@@ -35,12 +35,20 @@ const SignSchema = z.object({
 uploadRoutes.post("/v1/uploads/sign", async (c) => {
   const user = mustUser(c);
   const body = SignSchema.parse(await c.req.json());
-  const signedToday = await bumpWindowCounter("upload-sign", user.phone, nowIso().slice(0, 10));
+  const now = nowIso();
+  const signedToday = await bumpWindowCounter(
+    "upload-sign",
+    user.phone,
+    now.slice(0, 10),
+    Math.floor(Date.parse(now) / 1000) + 2 * 86400,
+  );
   if (signedToday > MAX_UPLOADS_PER_DAY) {
     throw new ApiError("rate_limited", "Daily upload limit reached; try again tomorrow");
   }
   const ext = body.content_type.split("/")[1] ?? "bin";
-  const key = `uploads/${body.kind}/${user.phone.replace("+", "")}/${newId()}.${ext}`;
+  // Opaque key: the object key ends up in item/donation records and image URLs,
+  // so it must not carry the uploader's phone number.
+  const key = `uploads/${body.kind}/${newId()}.${ext}`;
   const cmd = new PutObjectCommand({
     Bucket: env.imagesBucket(),
     Key: key,

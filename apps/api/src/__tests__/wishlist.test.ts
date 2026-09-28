@@ -13,7 +13,15 @@ import {
   seedMembership,
   seedUser,
 } from "./_fixtures.js";
-import { authHeader, installDdbMock, installFakeAuth, listAll, resetDdbStore } from "./_setup.js";
+import {
+  authHeader,
+  installDdbMock,
+  installFakeAuth,
+  listAll,
+  resetDdbStore,
+  setQueryPageSize,
+} from "./_setup.js";
+import { MAX_WISHLIST_CREATES_PER_DAY } from "../routes/wishlist.js";
 
 beforeEach(() => {
   resetDdbStore();
@@ -371,5 +379,71 @@ describe("Wishlist phone privacy", () => {
     const ownerText = await owner.text();
     expect(ownerText).toContain(FAMILY_PHONE);
     expect(ownerText).toContain(FRIEND_PHONE);
+  });
+});
+
+describe("wishlist votes under concurrency", () => {
+  it("counts one vote per member when two vote requests race", async () => {
+    seedAll();
+    const app = createApp();
+    const { id } = await createReq(app, FAMILY_PHONE);
+    const vote = (method: string) =>
+      app.request(`/v1/g/${GARAGE_ID}/wishlist/${id}/vote`, {
+        method,
+        headers: authHeader(FRIEND_PHONE),
+      });
+    const count = () =>
+      listAll().find((r) => r.SK.startsWith("WISH#") && r["id"] === id)?.["vote_count"];
+    const [a, b] = await Promise.all([vote("POST"), vote("POST")]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(count()).toBe(2);
+    const [c, d] = await Promise.all([vote("DELETE"), vote("DELETE")]);
+    expect([c.status, d.status]).toEqual([200, 200]);
+    expect(count()).toBe(1);
+  });
+
+  it("lists every request even when the table returns them over several pages", async () => {
+    seedAll();
+    const app = createApp();
+    for (let i = 0; i < 3; i++)
+      await createReq(app, FAMILY_PHONE, { item_name: `Tool ${i}` }, `w${i}`);
+    setQueryPageSize(2);
+    const res = await app.request(`/v1/g/${GARAGE_ID}/wishlist`, {
+      headers: authHeader(FRIEND_PHONE),
+    });
+    const body = (await res.json()) as { items: unknown[] };
+    expect(body.items).toHaveLength(3);
+  });
+
+  it("caps how many requests one member can open per day", async () => {
+    seedAll();
+    const app = createApp();
+    for (let i = 0; i < MAX_WISHLIST_CREATES_PER_DAY; i++) {
+      await createReq(app, FAMILY_PHONE, { item_name: `Tool ${i}` }, `cap${i}`);
+    }
+    const over = await app.request(`/v1/g/${GARAGE_ID}/wishlist`, {
+      method: "POST",
+      headers: {
+        ...authHeader(FAMILY_PHONE),
+        "content-type": "application/json",
+        "Idempotency-Key": "cap-over",
+      },
+      body: JSON.stringify({ item_name: "One too many" }),
+    });
+    expect(over.status).toBe(429);
+  });
+
+  it("bounds the photo reference size", async () => {
+    seedAll();
+    const res = await createApp().request(`/v1/g/${GARAGE_ID}/wishlist`, {
+      method: "POST",
+      headers: {
+        ...authHeader(FAMILY_PHONE),
+        "content-type": "application/json",
+        "Idempotency-Key": "big",
+      },
+      body: JSON.stringify({ item_name: "Saw", photo_url: "x".repeat(5000) }),
+    });
+    expect(res.status).toBe(400);
   });
 });

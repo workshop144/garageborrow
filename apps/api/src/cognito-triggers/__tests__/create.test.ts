@@ -3,8 +3,8 @@ import type { CreateAuthChallengeTriggerEvent } from "aws-lambda";
 import { mockClient } from "aws-sdk-client-mock";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { installDdbMock, resetDdbStore } from "../../__tests__/_setup.js";
-import { handler } from "../create-auth-challenge.js";
+import { installDdbMock, resetDdbStore, seedItem } from "../../__tests__/_setup.js";
+import { handler, SMS_PER_PHONE_PER_DAY } from "../create-auth-challenge.js";
 
 const sns = mockClient(SNSClient);
 
@@ -134,5 +134,25 @@ describe("create-auth-challenge", () => {
     for (let i = 0; i < 6; i++) last = await invoke(makeEvent());
     expect(sns.commandCalls(PublishCommand)).toHaveLength(5);
     expect(last?.response.privateChallengeParameters["code"]).toBe("");
+  });
+
+  it("still texts a member's first codes of the day after the shared daily budget is spent", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    seedItem({ PK: "RATELIMIT#sms-total", SK: `all#${day}`, count: 1_000_000 });
+    const result = await invoke(makeEvent("+15555550177"));
+    expect(sns.commandCalls(PublishCommand)).toHaveLength(1);
+    expect(result.response.privateChallengeParameters["code"]).toMatch(/^\d{6}$/);
+  });
+
+  it("caps each phone per day, so cycling a few numbers cannot drain the shared budget", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    seedItem({
+      PK: "RATELIMIT#sms-phone-day",
+      SK: `+15555550188#${day}`,
+      count: SMS_PER_PHONE_PER_DAY,
+    });
+    const result = await invoke(makeEvent("+15555550188"));
+    expect(sns.commandCalls(PublishCommand)).toHaveLength(0);
+    expect(result.response.privateChallengeParameters["code"]).toBe("");
   });
 });

@@ -11,6 +11,8 @@ import { registerRoute } from "workbox-routing";
 import { CacheFirst, NetworkFirst } from "workbox-strategies";
 import { ExpirationPlugin } from "workbox-expiration";
 
+import { apiCacheKey } from "./lib/apiCacheKey";
+
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>;
 };
@@ -35,12 +37,22 @@ interface MatchInput {
 }
 type RouteCb = (input: MatchInput) => boolean;
 
+// API responses are per user: cache them under a key that includes the signed-in
+// user (see lib/apiCacheKey.ts), and never cache a request without a token. A
+// request with no usable token is looked up under a key nothing is stored at.
+const apiIdentityPlugin: StrategyPlugins = {
+  cacheKeyWillBeUsed: ({ request }: { request: Request }) =>
+    Promise.resolve(apiCacheKey(request) ?? `${request.url}#__sw_uncached`),
+  cacheWillUpdate: ({ request, response }: { request: Request; response: Response }) =>
+    Promise.resolve(apiCacheKey(request) && response.ok ? response : null),
+} as unknown as StrategyPlugins;
+
 registerRoute(
   (({ url }: MatchInput) => url.pathname.startsWith("/v1/")) as RouteCb,
   new NetworkFirst({
     cacheName: "api",
     networkTimeoutSeconds: 5,
-    plugins: [expirationPlugin({ maxAgeSeconds: 60 * 5, maxEntries: 50 })],
+    plugins: [apiIdentityPlugin, expirationPlugin({ maxAgeSeconds: 60 * 5, maxEntries: 50 })],
   }),
 );
 

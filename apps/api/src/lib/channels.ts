@@ -3,13 +3,10 @@
 // channels by user prefs without knowing how a push payload is encrypted or
 // how SNS Publish formats SMS.
 
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
-
-import { ddb } from "./ddb.js";
 import { env } from "./env.js";
 import { newId, nowIso } from "./ids.js";
 import { logger } from "./logger.js";
-import { putNotification } from "./repo.js";
+import { putNotification, queryAll } from "./repo.js";
 import { sendSms } from "./sns.js";
 import type { Notification, NotificationChannel, PushSubscription } from "@garageborrow/shared";
 
@@ -48,16 +45,14 @@ export function setSmsDriver(d: SmsDriver | undefined): void {
 }
 
 export async function listPushSubscriptions(user_phone: string): Promise<PushSubscription[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: env.tableName(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `USER#${user_phone}`,
-        ":sk": "PUSH#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: env.tableName(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `USER#${user_phone}`,
+      ":sk": "PUSH#",
+    },
+  });
   return (r.Items ?? []) as PushSubscription[];
 }
 

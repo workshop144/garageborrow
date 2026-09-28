@@ -18,7 +18,7 @@
 // 5 sends in a day, further notifications are dropped (still written to the
 // inbox so the user can see them). The counter is reset by account-cleaner.
 
-import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 import { ddb } from "./lib/ddb.js";
 import { env } from "./lib/env.js";
@@ -38,6 +38,7 @@ import {
   listMembers,
   listWaitlist,
   listWishlistRequests,
+  queryAll,
 } from "./lib/repo.js";
 import type {
   Loan,
@@ -442,16 +443,14 @@ async function listAllGarageIds(): Promise<string[]> {
 }
 
 async function listReservationsForDate(garage_id: string, date: string): Promise<Reservation[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: env.tableName(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": `RES#${date}#`,
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: env.tableName(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": `RES#${date}#`,
+    },
+  });
   return (r.Items ?? []) as Reservation[];
 }
 

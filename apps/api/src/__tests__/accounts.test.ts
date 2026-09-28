@@ -237,6 +237,15 @@ describe("template: invite-only accounts", () => {
     expect(tpl).toMatch(/AllowAdminCreateUserOnly:\s*true/);
   });
 
+  it("leaves Cognito no SMS path of its own that would skip the trigger's caps", () => {
+    // ForgotPassword and attribute verification text through Cognito's own SMS
+    // role, outside create-auth-challenge's per-phone and daily caps.
+    expect(tpl).toMatch(/RecoveryMechanisms:\s*\n\s*- Name: admin_only/);
+    expect(tpl).not.toMatch(/verified_phone_number/);
+    expect(tpl).not.toMatch(/SmsConfiguration:/);
+    expect(tpl).not.toMatch(/AutoVerifiedAttributes:/);
+  });
+
   it("gives the create-auth trigger the table for its SMS caps", () => {
     const block = tpl.slice(
       tpl.indexOf("CreateAuthChallengeFunction:"),
