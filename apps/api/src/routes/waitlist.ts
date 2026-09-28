@@ -2,7 +2,7 @@ import { Hono } from "hono";
 
 import { mustGarage, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
-import { deleteWaitlist, listWaitlist } from "../lib/repo.js";
+import { deleteWaitlist, listWaitlist, queryAll } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
 import { loadGarageContext } from "../middleware/garage-context.js";
@@ -24,22 +24,18 @@ waitlistRoutes.delete("/v1/g/:garage/waitlist/:id", async (c) => {
   // We can't easily list all waitlist entries for a user without an extra
   // GSI; instead, iterate items the membership has touched. For now, do a
   // tenant-wide WAIT scan filtered by phone. Garages are small.
-  const { ddb } = await import("../lib/ddb.js");
-  const { QueryCommand } = await import("@aws-sdk/lib-dynamodb");
   const { env } = await import("../lib/env.js");
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: env.tableName(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      FilterExpression: "id = :id AND borrower_phone = :phone",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage.id}`,
-        ":sk": "WAIT#",
-        ":id": id,
-        ":phone": user.phone,
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: env.tableName(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    FilterExpression: "id = :id AND borrower_phone = :phone",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage.id}`,
+      ":sk": "WAIT#",
+      ":id": id,
+      ":phone": user.phone,
+    },
+  });
   const found = r.Items?.[0] as
     | { item_id: string; joined_at: string; borrower_phone: string }
     | undefined;

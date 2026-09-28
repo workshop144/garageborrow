@@ -4,7 +4,7 @@
 
 Every feature branch must run `/security-review` locally before pushing
 and opening a PR. The CI workflow (`.github/workflows/security-review.yml`)
-re-runs `/security-review` on the PR as a safety net, but catching issues
+re-runs a security review of the PR diff as a safety net, but catching issues
 locally is faster and cheaper than CI iteration.
 
 ### Required steps before opening any PR

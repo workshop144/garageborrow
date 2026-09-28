@@ -12,7 +12,6 @@ import {
   getGarage,
   getMembership,
   getNotification,
-  getUser,
   getUserAnyGarage,
   deleteInvite,
   listDonations,
@@ -23,6 +22,7 @@ import {
   putNotification,
   putPushSubscription,
   putUser,
+  updateUserFields,
 } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -143,9 +143,16 @@ meRoutes.post("/v1/me/join", async (c) => {
       last_seen_at: ts,
     };
     for (const garageId of garages) {
-      // Keep each garage's own row (display name etc.); new garages copy the base.
+      // Existing rows only gain the garage list; new garages get a copy of the
+      // base profile without its per-row notification counter.
       const own = profiles.find((p) => (p as { PK?: string }).PK === `TENANT#${garageId}`);
-      await putUser(garageId, { ...(own ?? base), garages_member_of: garages });
+      if (own && (await updateUserFields(garageId, user.phone, { garages_member_of: garages }))) {
+        continue;
+      }
+      const { notifications_sent_today: _counter, ...profile } = base as User & {
+        notifications_sent_today?: number;
+      };
+      await putUser(garageId, { ...profile, garages_member_of: garages });
     }
   }
   return c.json({ joined });
@@ -177,8 +184,16 @@ meRoutes.patch("/v1/me", async (c) => {
     notification_prefs: prefs,
     last_seen_at: nowIso(),
   };
+  // Set only what the caller changed on each garage's row: a whole-row put of
+  // the primary row reset other rows' notification counters and fields.
+  const fields: Record<string, unknown> = { last_seen_at: updated.last_seen_at };
+  if (body.display_name) fields["display_name"] = body.display_name;
+  if (body.visibility) fields["visibility"] = body.visibility;
+  for (const [k, v] of Object.entries(body.notification_prefs ?? {})) {
+    if (v !== undefined) fields[`notification_prefs.${k}`] = v;
+  }
   for (const garageId of updated.garages_member_of) {
-    await putUser(garageId, updated);
+    await updateUserFields(garageId, user.phone, fields);
   }
   return c.json({ user: updated });
 });
@@ -189,9 +204,8 @@ meRoutes.post("/v1/me/delete-request", requireIdempotencyKey(), async (c) => {
   const primary = await getUserAnyGarage(user.phone);
   if (!primary) throw new ApiError("not_found", "User not found");
   const ts = nowIso();
-  const updated: User = { ...primary, deleted_at: ts };
-  for (const garageId of updated.garages_member_of) {
-    await putUser(garageId, updated);
+  for (const garageId of primary.garages_member_of) {
+    await updateUserFields(garageId, user.phone, { deleted_at: ts });
   }
   // The account-cleaner Lambda hard-deletes records 30 days after deleted_at.
   return c.json({ scheduled_for_hard_delete_at: ts, status: "deletion_requested" });
@@ -305,8 +319,7 @@ meRoutes.post("/v1/me/push-subscription", async (c) => {
   const primary = await getUserAnyGarage(user.phone);
   if (primary) {
     for (const garageId of primary.garages_member_of) {
-      const u = await getUser(garageId, user.phone);
-      if (u) await putUser(garageId, { ...u, last_seen_at: nowIso() });
+      await updateUserFields(garageId, user.phone, { last_seen_at: nowIso() });
     }
   }
   return c.json({ id: newId(), status: "registered" }, 201);

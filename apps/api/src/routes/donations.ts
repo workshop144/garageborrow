@@ -8,7 +8,13 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
-import { getDonation, listDonations, putDonation, putItem } from "../lib/repo.js";
+import {
+  bumpWindowCounter,
+  getDonation,
+  listDonations,
+  putDonation,
+  putItem,
+} from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { audit, setAuditDetails } from "../middleware/audit.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -21,14 +27,19 @@ export const donationRoutes = new Hono<AppEnv>();
 donationRoutes.use("/v1/g/:garage/donations", requireAuth(), loadGarageContext());
 donationRoutes.use("/v1/g/:garage/donations/*", requireAuth(), loadGarageContext());
 
+// Sizes are bounded: offers are listed whole for the owner and the donor.
 const DonationCreateSchema = z.object({
-  item_name: z.string().min(1),
-  description: z.string(),
-  photo_keys: z.array(z.string().min(1)).default([]),
+  item_name: z.string().min(1).max(120),
+  description: z.string().max(2000),
+  photo_keys: z.array(z.string().min(1).max(300)).max(10).default([]),
   condition: DonationConditionSchema,
-  donor_notes: z.string().optional(),
-  suggested_category: z.string().optional(),
+  donor_notes: z.string().max(1000).optional(),
+  suggested_category: z.string().max(60).optional(),
 });
+
+// Offers per member per UTC day: far above real use, but it bounds how many
+// rows one account can add to the owner's queue.
+export const MAX_DONATIONS_PER_DAY = 20;
 
 donationRoutes.use("/v1/g/:garage/donations", idempotency());
 donationRoutes.post("/v1/g/:garage/donations", async (c) => {
@@ -36,6 +47,15 @@ donationRoutes.post("/v1/g/:garage/donations", async (c) => {
   const user = mustUser(c);
   const body = DonationCreateSchema.parse(await c.req.json());
   const ts = nowIso();
+  const offered = await bumpWindowCounter(
+    "donation-create",
+    user.phone,
+    ts.slice(0, 10),
+    Math.floor(Date.parse(ts) / 1000) + 2 * 86400,
+  );
+  if (offered > MAX_DONATIONS_PER_DAY) {
+    throw new ApiError("rate_limited", "Daily donation limit reached; try again tomorrow");
+  }
   const offer: DonationOffer = {
     id: newId(),
     garage_id: garage.id,

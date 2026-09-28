@@ -10,12 +10,12 @@ import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import {
+  bumpWindowCounter,
   bumpWishlistVoteCount,
   deleteWishlistVote,
   getUser,
   getUserAnyGarage,
   getWishlistRequest,
-  getWishlistVote,
   listAllWishlistVotesForVoter,
   listWishlistRequests,
   listWishlistVotes,
@@ -137,9 +137,18 @@ const CreateRequestSchema = z
       .optional(),
     reason: z.string().max(500).optional(),
     reference_url: HttpUrl.optional(),
-    photo_url: z.string().min(1).optional(),
+    // An uploads/ key from /v1/uploads/sign, rendered as /img/<key>.
+    photo_url: z
+      .string()
+      .max(300)
+      .regex(/^uploads\/[\w./-]+$/)
+      .optional(),
   })
   .strict();
+
+// Requests per member per UTC day: far above real use, but it bounds how many
+// rows (and owner notifications) one account can add.
+export const MAX_WISHLIST_CREATES_PER_DAY = 20;
 
 wishlistRoutes.use("/v1/g/:garage/wishlist", idempotency());
 wishlistRoutes.post("/v1/g/:garage/wishlist", audit(), async (c) => {
@@ -147,6 +156,15 @@ wishlistRoutes.post("/v1/g/:garage/wishlist", audit(), async (c) => {
   const user = mustUser(c);
   const body = CreateRequestSchema.parse(await c.req.json());
   const ts = nowIso();
+  const created = await bumpWindowCounter(
+    "wishlist-create",
+    user.phone,
+    ts.slice(0, 10),
+    Math.floor(Date.parse(ts) / 1000) + 2 * 86400,
+  );
+  if (created > MAX_WISHLIST_CREATES_PER_DAY) {
+    throw new ApiError("rate_limited", "Daily wishlist limit reached; try again tomorrow");
+  }
   const id = newId();
   const req: WishlistRequest = {
     id,
@@ -224,18 +242,17 @@ wishlistRoutes.post("/v1/g/:garage/wishlist/:id/vote", async (c) => {
   if (req.status !== "open") {
     throw new ApiError("conflict", `Cannot vote on a ${req.status} request`);
   }
-  const existing = await getWishlistVote(garage.id, id, user.phone);
-  if (existing) {
+  const recorded = await putWishlistVote(garage.id, {
+    request_id: id,
+    voter_phone: user.phone,
+    voted_at: nowIso(),
+  });
+  if (!recorded) {
     return c.json({
       request: forViewer({ ...req, my_vote: true }, user.phone, garage.owner_phone === user.phone),
       vote_count: req.vote_count,
     });
   }
-  await putWishlistVote(garage.id, {
-    request_id: id,
-    voter_phone: user.phone,
-    voted_at: nowIso(),
-  });
   const newCount = await bumpWishlistVoteCount(req, 1);
   // Threshold-crossing fires the wishlist_popular ping exactly once. We
   // detect by comparing pre/post counts so subsequent votes don't re-fire.
@@ -271,14 +288,12 @@ wishlistRoutes.delete("/v1/g/:garage/wishlist/:id/vote", async (c) => {
   if (!id) throw new ApiError("bad_request", "Missing id");
   const req = await getWishlistRequest(garage.id, id);
   if (!req) throw new ApiError("not_found", "Wishlist request not found");
-  const existing = await getWishlistVote(garage.id, id, user.phone);
-  if (!existing) {
+  if (!(await deleteWishlistVote(garage.id, id, user.phone))) {
     return c.json({
       request: forViewer({ ...req, my_vote: false }, user.phone, garage.owner_phone === user.phone),
       vote_count: req.vote_count,
     });
   }
-  await deleteWishlistVote(garage.id, id, user.phone);
   const newCount = await bumpWishlistVoteCount(req, -1);
   return c.json({
     request: forViewer(
@@ -438,14 +453,12 @@ wishlistRoutes.post("/v1/g/:garage/admin/wishlist/:id/decide", async (c) => {
   }
   let transferred = 0;
   for (const v of votes) {
-    const existing = await getWishlistVote(garage.id, canonical.id, v.voter_phone);
-    if (existing) continue;
-    await putWishlistVote(garage.id, {
+    const recorded = await putWishlistVote(garage.id, {
       request_id: canonical.id,
       voter_phone: v.voter_phone,
       voted_at: ts,
     });
-    transferred += 1;
+    if (recorded) transferred += 1;
   }
   if (transferred > 0) {
     await bumpWishlistVoteCount(canonical, transferred);

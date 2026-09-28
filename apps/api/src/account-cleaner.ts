@@ -1,11 +1,11 @@
 // Account-cleaner Lambda: runs nightly @ 07:00 UTC (≈3am ET). Two jobs:
 //
 //   1. Hard-delete users whose deleted_at is older than 30 days. For each
-//      such user, walk every garage they belonged to and overwrite their
-//      borrower / requester / donor / reporter phones in loans, reservations,
-//      donations, waitlist entries, and incident reports with a deterministic
-//      SHA-256-prefixed pseudonym. Then drop the per-tenant USER and MEMBER
-//      records and remove the Cognito identity.
+//      such user, drop the per-tenant USER and MEMBER records and the user
+//      partition, then replace every remaining occurrence of their phone in
+//      the table (any attribute, nested snapshots such as audit before/after,
+//      and keys such as waitlist sort keys) with a deterministic
+//      SHA-256-prefixed pseudonym, and remove the Cognito identity.
 //
 //   2. Reset the per-day notifications_sent_today counter on every user
 //      record. The counter resets at user-local midnight; running this at
@@ -21,7 +21,13 @@ import {
   CognitoIdentityProviderClient,
   AdminDeleteUserCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { BatchWriteCommand, DeleteCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  BatchWriteCommand,
+  DeleteCommand,
+  PutCommand,
+  ScanCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 
 import { ddb } from "./lib/ddb.js";
 import { env } from "./lib/env.js";
@@ -116,9 +122,9 @@ export async function runCleanup(now: Date): Promise<DeleteCounts> {
   }
 
   for (const [phone, entry] of byPhone) {
+    await deleteUserRecords(phone, entry.pks);
     const anonymized = await anonymizeAcrossEntities(phone);
     counts.records_anonymized += anonymized;
-    await deleteUserRecords(phone, entry.pks);
     await deleteCognitoUser(phone);
     counts.hard_deleted_users++;
     logger.info({ count: anonymized }, "cleaner_hard_deleted_user");
@@ -135,29 +141,49 @@ export async function runCleanup(now: Date): Promise<DeleteCounts> {
   for (const u of allUsers) {
     const item = u as User & { PK: string; SK: string; notifications_sent_today?: number };
     if (!item.notifications_sent_today) continue;
-    await ddb().send(
-      new PutCommand({
-        TableName: env.tableName(),
-        Item: { ...item, notifications_sent_today: 0 },
-      }),
-    );
+    // Touch only the counter: a whole-item put of the Scan snapshot would revert
+    // profile edits made since, and recreate a row deleted meanwhile.
+    try {
+      await ddb().send(
+        new UpdateCommand({
+          TableName: env.tableName(),
+          Key: { PK: item.PK, SK: item.SK },
+          UpdateExpression: "SET notifications_sent_today = :zero",
+          ConditionExpression: "attribute_exists(PK)",
+          ExpressionAttributeValues: { ":zero": 0 },
+        }),
+      );
+    } catch (err) {
+      if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+      continue;
+    }
     counts.counters_reset++;
   }
 
   return counts;
 }
 
+// Replaces the phone wherever it appears in a value: top-level attributes,
+// nested snapshots (audit before/after), arrays, and composite keys. The
+// digit guard keeps a shorter number from matching inside a longer one.
+export function scrubPhone(value: unknown, phone: string, replacement: string): unknown {
+  if (typeof value === "string") {
+    const re = new RegExp(`${phone.replace(/[^\d]/g, (ch) => `\\${ch}`)}(?!\\d)`, "g");
+    return value.replace(re, replacement);
+  }
+  if (Array.isArray(value)) return value.map((v) => scrubPhone(v, phone, replacement));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, scrubPhone(v, phone, replacement)]),
+    );
+  }
+  return value;
+}
+
 async function anonymizeAcrossEntities(phone: string): Promise<number> {
   const replacement = pseudonymFor(phone);
-  const targets = await scanAll({
-    filterExpression:
-      "borrower_phone = :p OR requester_phone = :p OR donor_phone = :p OR reporter_phone = :p",
-    expressionAttributeValues: { ":p": phone },
-  });
   let n = 0;
-  // Decrement wishlist vote counts when this user had voted. Wishlist is
-  // not a current schema; we still scan defensively in case future versions
-  // store votes via VOTE# rows referencing voter_phone.
+  // Votes are dropped rather than kept under a pseudonym.
   const votes = await scanAll({
     filterExpression: "voter_phone = :p",
     expressionAttributeValues: { ":p": phone },
@@ -169,17 +195,19 @@ async function anonymizeAcrossEntities(phone: string): Promise<number> {
     );
     n++;
   }
-  for (const t of targets) {
-    const row = t as Record<string, unknown> & { PK: string; SK: string };
-    const next = { ...row };
-    if (next["borrower_phone"] === phone) next["borrower_phone"] = replacement;
-    if (next["requester_phone"] === phone) next["requester_phone"] = replacement;
-    if (next["donor_phone"] === phone) next["donor_phone"] = replacement;
-    if (next["reporter_phone"] === phone) next["reporter_phone"] = replacement;
-    // Strip GSI projections that index on the phone — leaving them in place
-    // would expose the original phone via the byUser index.
-    if (typeof next["GSI1PK"] === "string" && (next["GSI1PK"] as string) === `USER#${phone}`) {
-      next["GSI1PK"] = `USER#${replacement}`;
+  // Copies of the phone are not limited to the *_phone attributes: accepted
+  // donations carry donated_by_phone, audit entries embed whole records, and
+  // some sort keys (waitlist) contain it. Walk the whole table, as the rest of
+  // this job does, and rewrite every row that still mentions it.
+  const rows = await scanAll({});
+  for (const r of rows) {
+    const row = r as Record<string, unknown> & { PK: string; SK: string };
+    if (!JSON.stringify(row).includes(phone)) continue;
+    const next = scrubPhone(row, phone, replacement) as typeof row;
+    if (next.PK !== row.PK || next.SK !== row.SK) {
+      await ddb().send(
+        new DeleteCommand({ TableName: env.tableName(), Key: { PK: row.PK, SK: row.SK } }),
+      );
     }
     await ddb().send(new PutCommand({ TableName: env.tableName(), Item: next }));
     n++;

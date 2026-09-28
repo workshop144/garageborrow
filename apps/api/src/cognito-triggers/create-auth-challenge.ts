@@ -36,7 +36,15 @@ function previousCode(
 
 // Hard caps on operator-paid texts. Cognito's InitiateAuth is a public API, so
 // /v1/auth/start's limits can be skipped by calling Cognito directly; these can't.
+//
+// Budgets are per phone first. The shared daily cap bounds total spend, but a
+// phone's first SMS_RESERVED_PER_PHONE_PER_DAY texts do not depend on it: one
+// caller cycling a few known numbers can spend the shared budget, and that must
+// not lock every member out of sign-in for the day. Accounts are admin-created,
+// so the reserved allowance is bounded by the member count.
 export const SMS_PER_PHONE_PER_HOUR = 5;
+export const SMS_PER_PHONE_PER_DAY = 10;
+export const SMS_RESERVED_PER_PHONE_PER_DAY = 2;
 const SMS_DAILY_CAP = Number(process.env["SMS_DAILY_CAP"] || "200");
 
 async function smsAllowed(phone: string): Promise<boolean> {
@@ -49,8 +57,13 @@ async function smsAllowed(phone: string): Promise<boolean> {
     logger.warn({ event: "sms_capped", scope: "phone" }, "per-phone SMS cap reached");
     return false;
   }
+  const perPhoneDay = await bumpWindowCounter("sms-phone-day", phone, day, expires);
+  if (perPhoneDay > SMS_PER_PHONE_PER_DAY) {
+    logger.warn({ event: "sms_capped", scope: "phone-day" }, "per-phone daily SMS cap reached");
+    return false;
+  }
   const total = await bumpWindowCounter("sms-total", "all", day, expires);
-  if (total > SMS_DAILY_CAP) {
+  if (total > SMS_DAILY_CAP && perPhoneDay > SMS_RESERVED_PER_PHONE_PER_DAY) {
     logger.warn({ event: "sms_capped", scope: "daily" }, "daily SMS cap reached");
     return false;
   }

@@ -7,6 +7,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  type QueryCommandInput,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
@@ -77,6 +78,23 @@ export async function putGarage(g: Garage): Promise<void> {
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, g) }));
 }
 
+// Every matching row. A single Query returns at most 1 MB, so callers that
+// read "the first page" silently dropped rows once a partition grew past it.
+export async function queryAll(
+  input: QueryCommandInput,
+): Promise<{ Items: Record<string, unknown>[] }> {
+  const items: Record<string, unknown>[] = [];
+  let start: Record<string, unknown> | undefined;
+  do {
+    const r = await ddb().send(
+      new QueryCommand({ ...input, ...(start ? { ExclusiveStartKey: start } : {}) }),
+    );
+    if (r.Items) items.push(...r.Items);
+    start = r.LastEvaluatedKey;
+  } while (start);
+  return { Items: items };
+}
+
 // ─────────────────────────── User ─────────────────────────────
 
 export async function getUser(garage_id: string, phone: string): Promise<User | undefined> {
@@ -97,17 +115,58 @@ export async function putUser(garage_id: string, u: User): Promise<void> {
   );
 }
 
+// Sets only the given attributes on an existing profile row (dotted names reach
+// into maps, e.g. "notification_prefs.reminders"). Unlike putUser it leaves the
+// rest of the row alone, including notifications_sent_today, and never
+// recreates a row that was deleted. Returns false when the row is missing.
+export async function updateUserFields(
+  garage_id: string,
+  phone: string,
+  fields: Record<string, unknown>,
+): Promise<boolean> {
+  const k = tenantUserKey(garage_id, phone);
+  const names: Record<string, string> = {};
+  const values: Record<string, unknown> = {};
+  const sets = Object.entries(fields).map(([path, value], i) => {
+    const segs = path.split(".").map((seg, j) => {
+      names[`#f${i}_${j}`] = seg;
+      return `#f${i}_${j}`;
+    });
+    values[`:v${i}`] = value;
+    return `${segs.join(".")} = :v${i}`;
+  });
+  if (sets.length === 0) return true;
+  try {
+    await ddb().send(
+      new UpdateCommand({
+        TableName: table(),
+        Key: { PK: k.pk, SK: k.sk },
+        UpdateExpression: `SET ${sets.join(", ")}`,
+        ConditionExpression: "attribute_exists(PK)",
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
+}
+
+export function isConditionFailure(err: unknown): boolean {
+  return (err as { name?: string } | undefined)?.name === "ConditionalCheckFailedException";
+}
+
 // Every per-garage profile row for this phone. GSI1PK "USER#<phone>" also holds
 // the user's loans and reservations, so the sort key prefix selects profiles.
 export async function listUserProfiles(phone: string): Promise<User[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      IndexName: "byUser",
-      KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
-      ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": "USER#" },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    IndexName: "byUser",
+    KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": "USER#" },
+  });
   return (r.Items ?? []) as User[];
 }
 
@@ -135,16 +194,14 @@ export async function putMembership(m: GarageMembership): Promise<void> {
 }
 
 export async function listMembers(garage_id: string): Promise<GarageMembership[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "MEMBER#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "MEMBER#",
+    },
+  });
   return (r.Items ?? []) as GarageMembership[];
 }
 
@@ -189,16 +246,14 @@ export async function putItem(item: Item): Promise<void> {
 }
 
 export async function listItems(garage_id: string): Promise<Item[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "ITEM#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "ITEM#",
+    },
+  });
   // Filter to only top-level item records (SK = ITEM#<id>, no further #).
   return (r.Items ?? []).filter(
     (it) => typeof it["SK"] === "string" && (it["SK"] as string).split("#").length === 2,
@@ -206,32 +261,28 @@ export async function listItems(garage_id: string): Promise<Item[]> {
 }
 
 export async function listInstances(garage_id: string, item_id: string): Promise<Instance[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": `ITEM#${item_id}#INST#`,
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": `ITEM#${item_id}#INST#`,
+    },
+  });
   return (r.Items ?? []) as Instance[];
 }
 
 export async function listAllInstancesInGarage(garage_id: string): Promise<Instance[]> {
   // Single query for all ITEM# records, partition out the instance rows
   // (SK = ITEM#<item_id>#INST#<instance_id>, four `#`-segments).
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "ITEM#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "ITEM#",
+    },
+  });
   return (r.Items ?? []).filter(
     (it) => typeof it["SK"] === "string" && (it["SK"] as string).split("#").length === 4,
   ) as Instance[];
@@ -256,32 +307,28 @@ export async function putLoan(loan: Loan): Promise<void> {
 }
 
 export async function listLoansByGarage(garage_id: string): Promise<Loan[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "LOAN#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "LOAN#",
+    },
+  });
   return (r.Items ?? []) as Loan[];
 }
 
 export async function getLoan(garage_id: string, loan_id: string): Promise<Loan | undefined> {
   // Loans are scattered across LOAN#<date>#<id>; we have no direct date here,
   // so query the date prefix and filter. Production callers know the date.
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "LOAN#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "LOAN#",
+    },
+  });
   return ((r.Items ?? []) as Loan[]).find((l) => l.id === loan_id);
 }
 
@@ -293,21 +340,19 @@ export async function listOverdueAutoConfirm(
   garage_id: string,
   cutoffIso: string,
 ): Promise<Loan[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      FilterExpression:
-        "#status = :active AND attribute_exists(return_claimed_at) AND return_claimed_at < :cutoff",
-      ExpressionAttributeNames: { "#status": "status" },
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "LOAN#",
-        ":active": "active",
-        ":cutoff": cutoffIso,
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    FilterExpression:
+      "#status = :active AND attribute_exists(return_claimed_at) AND return_claimed_at < :cutoff",
+    ExpressionAttributeNames: { "#status": "status" },
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "LOAN#",
+      ":active": "active",
+      ":cutoff": cutoffIso,
+    },
+  });
   return (r.Items ?? []) as Loan[];
 }
 
@@ -332,16 +377,14 @@ export async function putWaitlist(w: WaitlistEntry): Promise<void> {
 }
 
 export async function listWaitlist(garage_id: string, item_id: string): Promise<WaitlistEntry[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": `WAIT#${item_id}#`,
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": `WAIT#${item_id}#`,
+    },
+  });
   return (r.Items ?? []) as WaitlistEntry[];
 }
 
@@ -363,16 +406,14 @@ export async function putDonation(d: DonationOffer): Promise<void> {
 }
 
 export async function listDonations(garage_id: string): Promise<DonationOffer[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "DONATION#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "DONATION#",
+    },
+  });
   return (r.Items ?? []) as DonationOffer[];
 }
 
@@ -391,16 +432,14 @@ export async function putIncident(i: IncidentReport): Promise<void> {
 }
 
 export async function listIncidents(garage_id: string): Promise<IncidentReport[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "INCIDENT#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "INCIDENT#",
+    },
+  });
   return (r.Items ?? []) as IncidentReport[];
 }
 
@@ -436,16 +475,14 @@ export async function putWishlistRequest(req: WishlistRequest): Promise<void> {
 }
 
 export async function listWishlistRequests(garage_id: string): Promise<WishlistRequest[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "WISH#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "WISH#",
+    },
+  });
   return (r.Items ?? []) as WishlistRequest[];
 }
 
@@ -458,40 +495,62 @@ export async function getWishlistRequest(
 
 export async function bumpWishlistVoteCount(req: WishlistRequest, delta: number): Promise<number> {
   const k = wishlistKey(req.garage_id, req.created_at.slice(0, 10), req.id);
-  // ADD is atomic so concurrent voters can't race on the count. The follow-up
-  // putWishlistRequest below refreshes GSI3 + updated_at; if two concurrent
-  // ADDs both refresh, the loser may write a slightly stale GSI3SK, which
-  // self-corrects on the next vote — the canonical count stays correct.
+  // ADD is atomic so concurrent voters can't race on the count; the caller only
+  // bumps after its conditional vote-row write succeeded, so each member's vote
+  // counts once.
   const r = await ddb().send(
     new UpdateCommand({
       TableName: table(),
       Key: { PK: k.pk, SK: k.sk },
       UpdateExpression: "ADD vote_count :d",
+      ConditionExpression: "attribute_exists(PK)",
       ExpressionAttributeValues: { ":d": delta },
       ReturnValues: "UPDATED_NEW",
     }),
   );
   const next = r.Attributes as { vote_count?: number } | undefined;
   const newCount = typeof next?.vote_count === "number" ? next.vote_count : req.vote_count + delta;
-  if (req.status === "open") {
-    const fresh: WishlistRequest = {
-      ...req,
-      vote_count: newCount,
-      updated_at: new Date().toISOString(),
-    };
-    await putWishlistRequest(fresh);
+  // Refresh the open-list sort key in place. Re-putting the request snapshot
+  // here could undo a concurrent status change (e.g. the owner declining it).
+  const gsi = gsi3WishlistByVotes(req.garage_id, newCount, req.created_at.slice(0, 10), req.id);
+  try {
+    await ddb().send(
+      new UpdateCommand({
+        TableName: table(),
+        Key: { PK: k.pk, SK: k.sk },
+        UpdateExpression: "SET GSI3SK = :sk, updated_at = :u",
+        ConditionExpression: "#status = :open",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":sk": gsi.GSI3SK,
+          ":u": new Date().toISOString(),
+          ":open": "open",
+        },
+      }),
+    );
+  } catch (err) {
+    if (!isConditionFailure(err)) throw err;
   }
   return newCount;
 }
 
-export async function putWishlistVote(garage_id: string, vote: WishlistVote): Promise<void> {
+// Records the vote only if this member has not voted yet. Returns false when a
+// vote row already exists (a repeat or a concurrent duplicate request).
+export async function putWishlistVote(garage_id: string, vote: WishlistVote): Promise<boolean> {
   const k = wishlistVoteKey(garage_id, vote.request_id, vote.voter_phone);
-  await ddb().send(
-    new PutCommand({
-      TableName: table(),
-      Item: { ...vote, PK: k.pk, SK: k.sk },
-    }),
-  );
+  try {
+    await ddb().send(
+      new PutCommand({
+        TableName: table(),
+        Item: { ...vote, PK: k.pk, SK: k.sk },
+        ConditionExpression: "attribute_not_exists(PK)",
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
 }
 
 export async function getWishlistVote(
@@ -508,16 +567,14 @@ export async function listWishlistVotes(
   garage_id: string,
   request_id: string,
 ): Promise<WishlistVote[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": `WISHVOTE#${request_id}#`,
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": `WISHVOTE#${request_id}#`,
+    },
+  });
   return (r.Items ?? []) as WishlistVote[];
 }
 
@@ -527,26 +584,38 @@ export async function listAllWishlistVotesForVoter(
 ): Promise<WishlistVote[]> {
   // No dedicated GSI for voter-scoped lookups; scan all wishvote rows in the
   // garage and filter by voter_phone. Volume is small (one row per vote).
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "WISHVOTE#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "WISHVOTE#",
+    },
+  });
   return ((r.Items ?? []) as WishlistVote[]).filter((v) => v.voter_phone === voter_phone);
 }
 
+// Removes the vote if present. Returns false when there was none to remove, so
+// two concurrent unvotes decrement the count once.
 export async function deleteWishlistVote(
   garage_id: string,
   request_id: string,
   voter_phone: string,
-): Promise<void> {
+): Promise<boolean> {
   const k = wishlistVoteKey(garage_id, request_id, voter_phone);
-  await ddb().send(new DeleteCommand({ TableName: table(), Key: { PK: k.pk, SK: k.sk } }));
+  try {
+    await ddb().send(
+      new DeleteCommand({
+        TableName: table(),
+        Key: { PK: k.pk, SK: k.sk },
+        ConditionExpression: "attribute_exists(PK)",
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
 }
 
 // ─────────────────────────── Audit log ────────────────────────
@@ -557,16 +626,14 @@ export async function putAuditLogEntry(entry: AuditLogEntry): Promise<void> {
 }
 
 export async function listAuditLogEntries(garage_id: string): Promise<AuditLogEntry[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `TENANT#${garage_id}`,
-        ":sk": "AUDIT#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "AUDIT#",
+    },
+  });
   return (r.Items ?? []) as AuditLogEntry[];
 }
 
@@ -578,16 +645,14 @@ export async function putNotification(n: Notification): Promise<void> {
 }
 
 export async function listNotifications(phone: string): Promise<Notification[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: {
-        ":pk": `USER#${phone}`,
-        ":sk": "NOTIFICATION#",
-      },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `USER#${phone}`,
+      ":sk": "NOTIFICATION#",
+    },
+  });
   return (r.Items ?? []) as Notification[];
 }
 
@@ -693,13 +758,11 @@ export async function listInvitesForPhone(
   phone: string,
   nowEpochSec: number,
 ): Promise<GarageInvite[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-      ExpressionAttributeValues: { ":pk": `INVITE#${phone}`, ":sk": "GARAGE#" },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `INVITE#${phone}`, ":sk": "GARAGE#" },
+  });
   return ((r.Items ?? []) as GarageInvite[]).filter((i) => i.expires_at > nowEpochSec);
 }
 
@@ -707,14 +770,12 @@ export async function listInvitesForGarage(
   garage_id: string,
   nowEpochSec: number,
 ): Promise<GarageInvite[]> {
-  const r = await ddb().send(
-    new QueryCommand({
-      TableName: table(),
-      IndexName: "byUser",
-      KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
-      ExpressionAttributeValues: { ":pk": `INVITES#${garage_id}`, ":sk": "INVITE#" },
-    }),
-  );
+  const r = await queryAll({
+    TableName: table(),
+    IndexName: "byUser",
+    KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `INVITES#${garage_id}`, ":sk": "INVITE#" },
+  });
   return ((r.Items ?? []) as GarageInvite[]).filter((i) => i.expires_at > nowEpochSec);
 }
 
