@@ -756,6 +756,8 @@ Resources:
               Action:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
+                # attribute-scoped scrub and counter reset (UpdateCommand)
+                - dynamodb:UpdateItem
                 - dynamodb:Query
                 - dynamodb:Scan
                 - dynamodb:BatchGetItem

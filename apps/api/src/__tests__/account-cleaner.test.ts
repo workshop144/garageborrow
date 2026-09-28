@@ -16,7 +16,14 @@ import {
   seedMembership,
   seedUser,
 } from "./_fixtures.js";
-import { installDdbMock, listAll, onNextScan, resetDdbStore, seedItem } from "./_setup.js";
+import {
+  deleteItem as resetOne,
+  installDdbMock,
+  listAll,
+  onNextScan,
+  resetDdbStore,
+  seedItem,
+} from "./_setup.js";
 
 beforeEach(() => {
   resetDdbStore();
@@ -181,6 +188,63 @@ describe("account-cleaner", () => {
     const updated = listAll().find((r) => r.PK === userKey.pk && r.SK === userKey.sk);
     expect(updated?.["display_name"]).toBe("Renamed mid-sweep");
     expect(updated?.["notifications_sent_today"]).toBe(0);
+  });
+
+  // The scrub reads the whole table with one Scan and writes later; runCleanup's
+  // fourth Scan (deleted users, their partition, votes, whole table) is that one.
+  function afterWholeTableScan(fn: () => void): void {
+    onNextScan(() => onNextScan(() => onNextScan(() => onNextScan(fn))));
+  }
+
+  it("keeps an edit made to a row between the scrub's Scan and its write", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE, { deleted_at: "2026-03-01T12:00:00Z" });
+    seedMembership(FAMILY_PHONE, "family");
+    const pk = `TENANT#${GARAGE_ID}`;
+    const row = { PK: pk, SK: "ITEM#donated-1", id: "donated-1", name: "Drill" };
+    seedItem({ ...row, donated_by_phone: FAMILY_PHONE });
+    afterWholeTableScan(() =>
+      seedItem({ ...row, donated_by_phone: FAMILY_PHONE, name: "Cordless drill" }),
+    );
+
+    await runCleanup(new Date("2026-04-26T03:00:00Z"));
+
+    const item = listAll().find((r) => r.SK === "ITEM#donated-1");
+    expect(item?.["name"]).toBe("Cordless drill");
+    expect(item?.["donated_by_phone"]).toBe(pseudonymFor(FAMILY_PHONE));
+  });
+
+  it("re-reads a re-keyed row edited mid-sweep instead of writing the stale copy", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE, { deleted_at: "2026-03-01T12:00:00Z" });
+    seedMembership(FAMILY_PHONE, "family");
+    const wk = waitlistKey(GARAGE_ID, "item-1", "2026-03-02T12:00:00Z", FAMILY_PHONE);
+    const row = { PK: wk.pk, SK: wk.sk, item_id: "item-1", borrower_phone: FAMILY_PHONE };
+    seedItem({ ...row, notify_when_available: true });
+    afterWholeTableScan(() => seedItem({ ...row, notify_when_available: false }));
+
+    await runCleanup(new Date("2026-04-26T03:00:00Z"));
+
+    const all = listAll();
+    expect(JSON.stringify(all)).not.toContain(FAMILY_PHONE);
+    const moved = all.filter((r) => r["item_id"] === "item-1" && "notify_when_available" in r);
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.["notify_when_available"]).toBe(false);
+  });
+
+  it("does not recreate a row deleted between the Scan and the write", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE, { deleted_at: "2026-03-01T12:00:00Z" });
+    seedMembership(FAMILY_PHONE, "family");
+    const dk = donationKey(GARAGE_ID, "2026-03-02", "don-gone");
+    seedItem({ PK: dk.pk, SK: dk.sk, id: "don-gone", donor_phone: FAMILY_PHONE });
+    afterWholeTableScan(() => {
+      resetOne(dk.pk, dk.sk);
+    });
+
+    await runCleanup(new Date("2026-04-26T03:00:00Z"));
+
+    expect(listAll().find((r) => r["id"] === "don-gone")).toBeUndefined();
   });
 
   it("scrubs whole numbers only, not a prefix of a longer one", () => {

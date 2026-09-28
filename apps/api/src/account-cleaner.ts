@@ -24,7 +24,6 @@ import {
 import {
   BatchWriteCommand,
   DeleteCommand,
-  PutCommand,
   ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -32,6 +31,7 @@ import {
 import { ddb } from "./lib/ddb.js";
 import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
+import { rewriteRow, type Row } from "./lib/row-rewrite.js";
 import { initSentry } from "./lib/sentry.js";
 import type { User } from "@garageborrow/shared";
 
@@ -198,19 +198,26 @@ async function anonymizeAcrossEntities(phone: string): Promise<number> {
   // Copies of the phone are not limited to the *_phone attributes: accepted
   // donations carry donated_by_phone, audit entries embed whole records, and
   // some sort keys (waitlist) contain it. Walk the whole table, as the rest of
-  // this job does, and rewrite every row that still mentions it.
+  // this job does, and rewrite every row that still mentions it. The Scan is a
+  // snapshot: rewriteRow writes only the scrubbed attributes and only while they
+  // still hold the scanned values, so an edit made mid-sweep is never reverted
+  // (it re-reads and scrubs the current row instead).
   const rows = await scanAll({});
   for (const r of rows) {
-    const row = r as Record<string, unknown> & { PK: string; SK: string };
-    if (!JSON.stringify(row).includes(phone)) continue;
-    const next = scrubPhone(row, phone, replacement) as typeof row;
-    if (next.PK !== row.PK || next.SK !== row.SK) {
-      await ddb().send(
-        new DeleteCommand({ TableName: env.tableName(), Key: { PK: row.PK, SK: row.SK } }),
-      );
+    const snapshot = r as Row;
+    if (!JSON.stringify(snapshot).includes(phone)) continue;
+    const outcome = await rewriteRow({
+      table: env.tableName(),
+      snapshot,
+      transform: (row) =>
+        JSON.stringify(row).includes(phone) ? (scrubPhone(row, phone, replacement) as Row) : null,
+    });
+    if (outcome === "written") n++;
+    if (outcome === "gave_up") {
+      // Five conflicting edits in a row; the user rows are already gone, so a
+      // later run will not revisit this phone. Surface it for a manual re-run.
+      logger.error({ sk_prefix: snapshot.SK.split("#")[0] }, "cleaner_scrub_gave_up");
     }
-    await ddb().send(new PutCommand({ TableName: env.tableName(), Item: next }));
-    n++;
   }
   return n;
 }
