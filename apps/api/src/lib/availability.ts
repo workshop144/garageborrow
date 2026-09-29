@@ -2,10 +2,18 @@
 // "Borrow it" on available items, but the API is reachable directly, so the
 // owner-set item/instance state and existing commitments are enforced here.
 
-import type { Instance, Item, Loan, Reservation } from "@garageborrow/shared";
+import type { Garage, Instance, Item, Loan, Reservation } from "@garageborrow/shared";
 
 import { ApiError } from "./errors.js";
-import { listInstances, listLoansByGarage, listReservationsByGarage } from "./repo.js";
+import {
+  commitWithItemLock,
+  getGarage,
+  getItem,
+  getItemLockVersion,
+  listInstances,
+  listLoansByGarage,
+  listReservationsByGarage,
+} from "./repo.js";
 
 // Owner-set item states that still accept borrows. all_loaned, broken,
 // maintenance, retired and lost do not.
@@ -44,11 +52,31 @@ function loanWindow(l: Loan): Window {
 
 // Throws ApiError unless the item (and instance, when given) can take this
 // borrow or reservation. Returns the instance to record on the loan, if any.
+// A closed garage lends nothing: closed_indefinitely blocks everything, and
+// closed_until blocks anything starting before the reopening day (UTC).
+function assertGarageOpen(garage: Garage | undefined, window: Window): void {
+  if (!garage) throw new ApiError("not_found", "Garage not found");
+  if (garage.status === "open") return;
+  if (garage.status === "closed_until" && garage.closed_until_date) {
+    const reopens = Date.parse(`${garage.closed_until_date}T00:00:00Z`);
+    if (Number.isFinite(reopens) && window.start >= reopens) return;
+  }
+  throw new ApiError("conflict", "This garage is closed right now");
+}
+
 export async function assertAvailable(check: AvailabilityCheck): Promise<string | undefined> {
-  const { item, instanceId, borrowerPhone, window } = check;
+  const { instanceId, borrowerPhone, window } = check;
   if (!(window.start < window.end)) {
     throw new ApiError("bad_request", "start must be before end");
   }
+  // Re-read garage and item here, at the decision, not from the request's start.
+  const [garage, fresh] = await Promise.all([
+    getGarage(check.item.garage_id),
+    getItem(check.item.garage_id, check.item.id),
+  ]);
+  assertGarageOpen(garage, window);
+  if (!fresh) throw new ApiError("not_found", "Item not found");
+  const item = fresh;
   if (!BORROWABLE_ITEM_STATUS.has(item.status)) {
     throw new ApiError("conflict", "This item is not available to borrow right now");
   }
@@ -114,4 +142,27 @@ export async function assertAvailable(check: AvailabilityCheck): Promise<string 
   }
   // Record a concrete unit so later checks can count it precisely.
   return free[0]?.id;
+}
+
+const COMMIT_ATTEMPTS = 3;
+
+// Check-and-commit for a write that takes a unit (active loan, approved
+// reservation). The item's lock version is read before the availability check
+// reads loans and reservations, and the write commits only if no other
+// commitment for the item landed in between; otherwise the check runs again
+// against the new state (and normally refuses: the unit is gone).
+export async function commitAvailable<T>(
+  check: Omit<AvailabilityCheck, "commits">,
+  build: (instanceId: string | undefined) => T,
+  toRow: (value: T) => Record<string, unknown> & { PK: string; SK: string },
+): Promise<T> {
+  for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
+    const seen = await getItemLockVersion(check.item.garage_id, check.item.id);
+    const instanceId = await assertAvailable({ ...check, commits: true });
+    const value = build(instanceId);
+    if (await commitWithItemLock(check.item.garage_id, check.item.id, seen, toRow(value))) {
+      return value;
+    }
+  }
+  throw new ApiError("conflict", "Someone else just took this item; try again");
 }

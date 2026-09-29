@@ -6,9 +6,9 @@ import { z } from "zod";
 import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
-import { assertAvailable } from "../lib/availability.js";
+import { assertAvailable, commitAvailable } from "../lib/availability.js";
 import { invokeNotifier } from "../lib/invoke.js";
-import { getItem, putReservation } from "../lib/repo.js";
+import { getItem, putReservation, reservationRow } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
 import { loadGarageContext } from "../middleware/garage-context.js";
@@ -37,14 +37,8 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
   // Same answer as a missing item: tier-hidden items are not acknowledged.
   if (access === "hidden") throw new ApiError("not_found", "Item not found");
   const approvalRequired = access === "request" || item.requires_approval;
-  const instanceId = await assertAvailable({
-    item,
-    instanceId: body.instance_id,
-    borrowerPhone: user.phone,
-    window: { start: Date.parse(body.start_at), end: Date.parse(body.end_at) },
-    commits: !approvalRequired,
-  });
-  const reservation: Reservation = {
+  const window = { start: Date.parse(body.start_at), end: Date.parse(body.end_at) };
+  const build = (instanceId: string | undefined): Reservation => ({
     id: newId(),
     garage_id: garage.id,
     item_id: item.id,
@@ -54,8 +48,16 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
     end_at: body.end_at,
     status: approvalRequired ? "pending" : "approved",
     approval_required: approvalRequired,
-  };
-  await putReservation(reservation);
+  });
+  const check = { item, instanceId: body.instance_id, borrowerPhone: user.phone, window };
+  let reservation: Reservation;
+  if (approvalRequired) {
+    reservation = build(await assertAvailable({ ...check, commits: false }));
+    await putReservation(reservation);
+  } else {
+    // An approved reservation takes a unit: commit it atomically.
+    reservation = await commitAvailable(check, build, reservationRow);
+  }
   if (approvalRequired) {
     await invokeNotifier({
       type: "reservation_decided",
