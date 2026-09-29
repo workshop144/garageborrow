@@ -7,14 +7,14 @@ import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
-import { assertAvailable } from "../lib/availability.js";
+import { assertAvailable, commitAvailable } from "../lib/availability.js";
 import { LIABILITY_COPY_VERSION } from "../lib/liability.js";
 import { logger } from "../lib/logger.js";
 import {
   bumpMemberCounter,
   getItem,
   getLoan,
-  putLoan,
+  loanRow,
   putReservation,
   updateLoan,
 } from "../lib/repo.js";
@@ -51,14 +51,15 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
   const durationDays = body.duration_days ?? item.default_duration_days;
   const expectedReturnAt = new Date(Date.now() + durationDays * 86400_000).toISOString();
   const needsApproval = access === "request" || item.requires_approval;
-  const instanceId = await assertAvailable({
-    item,
-    instanceId: body.instance_id,
-    borrowerPhone: user.phone,
-    window: { start: Date.parse(ts), end: Date.parse(expectedReturnAt) },
-    commits: !needsApproval,
-  });
+  const window = { start: Date.parse(ts), end: Date.parse(expectedReturnAt) };
   if (needsApproval) {
+    const instanceId = await assertAvailable({
+      item,
+      instanceId: body.instance_id,
+      borrowerPhone: user.phone,
+      window,
+      commits: false,
+    });
     const reservation = {
       id: newId(),
       garage_id: garage.id,
@@ -79,20 +80,23 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
       202,
     );
   }
-  const loan: Loan = {
-    id: newId(),
-    garage_id: garage.id,
-    item_id: item.id,
-    ...(instanceId ? { instance_id: instanceId } : {}),
-    borrower_phone: user.phone,
-    borrowed_at: ts,
-    expected_return_at: expectedReturnAt,
-    status: "active",
-    extension_count: 0,
-    liability_acknowledged_at: ts,
-    liability_copy_version: LIABILITY_COPY_VERSION,
-  };
-  await putLoan(loan);
+  const loan = await commitAvailable(
+    { item, instanceId: body.instance_id, borrowerPhone: user.phone, window },
+    (instanceId): Loan => ({
+      id: newId(),
+      garage_id: garage.id,
+      item_id: item.id,
+      ...(instanceId ? { instance_id: instanceId } : {}),
+      borrower_phone: user.phone,
+      borrowed_at: ts,
+      expected_return_at: expectedReturnAt,
+      status: "active",
+      extension_count: 0,
+      liability_acknowledged_at: ts,
+      liability_copy_version: LIABILITY_COPY_VERSION,
+    }),
+    loanRow,
+  );
   await bumpMemberCounter(garage.id, user.phone, "borrows_total", 1);
   await bumpMemberCounter(garage.id, user.phone, "borrows_active", 1);
   logger.info({ garage_id: garage.id, item_id: item.id, loan_id: loan.id }, "loan_created");

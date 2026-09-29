@@ -8,6 +8,7 @@ import {
   PutCommand,
   QueryCommand,
   type QueryCommandInput,
+  TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
@@ -295,15 +296,14 @@ export async function putInstance(inst: Instance): Promise<void> {
 
 // ─────────────────────────── Loan ─────────────────────────────
 
-export async function putLoan(loan: Loan): Promise<void> {
+export function loanRow(loan: Loan): Record<string, unknown> & { PK: string; SK: string } {
   const k = loanKey(loan.garage_id, loan.borrowed_at.slice(0, 10), loan.id);
   const gsi = gsi1LoanByUser(loan.borrower_phone, loan.borrowed_at);
-  await ddb().send(
-    new PutCommand({
-      TableName: table(),
-      Item: { ...loan, PK: k.pk, SK: k.sk, ...gsi },
-    }),
-  );
+  return { ...loan, PK: k.pk, SK: k.sk, ...gsi };
+}
+
+export async function putLoan(loan: Loan): Promise<void> {
+  await ddb().send(new PutCommand({ TableName: table(), Item: loanRow(loan) }));
 }
 
 export async function listLoansByGarage(garage_id: string): Promise<Loan[]> {
@@ -358,15 +358,80 @@ export async function listOverdueAutoConfirm(
 
 // ─────────────────────────── Reservation ──────────────────────
 
-export async function putReservation(r: Reservation): Promise<void> {
+export function reservationRow(
+  r: Reservation,
+): Record<string, unknown> & { PK: string; SK: string } {
   const k = reservationKey(r.garage_id, r.start_at.slice(0, 10), r.id);
   const gsi = gsi1ReservationByUser(r.borrower_phone, r.start_at);
-  await ddb().send(
-    new PutCommand({
+  return { ...r, PK: k.pk, SK: k.sk, ...gsi };
+}
+
+export async function putReservation(r: Reservation): Promise<void> {
+  await ddb().send(new PutCommand({ TableName: table(), Item: reservationRow(r) }));
+}
+
+// ─────────────────────────── Item commit lock ─────────────────
+// One row per item whose version every commitment (active loan, approved
+// reservation) bumps in the same transaction that writes it. A borrow reads
+// the version before it reads loans and reservations, and commits only if the
+// version is unchanged, so two concurrent borrows of the last free unit cannot
+// both succeed: the loser re-checks and sees the winner's loan.
+
+function itemLockKey(garage_id: string, item_id: string): { PK: string; SK: string } {
+  return { PK: `TENANT#${garage_id}`, SK: `LOCK#ITEM#${item_id}` };
+}
+
+export async function getItemLockVersion(garage_id: string, item_id: string): Promise<number> {
+  const r = await ddb().send(
+    new GetCommand({
       TableName: table(),
-      Item: { ...r, PK: k.pk, SK: k.sk, ...gsi },
+      Key: itemLockKey(garage_id, item_id),
+      ConsistentRead: true,
     }),
   );
+  return ((r.Item as { version?: number } | undefined)?.version ?? 0) as number;
+}
+
+// Writes `row` and bumps the item's lock from `seenVersion`. Returns false when
+// another commitment for this item landed since the version was read.
+export async function commitWithItemLock(
+  garage_id: string,
+  item_id: string,
+  seenVersion: number,
+  row: Record<string, unknown> & { PK: string; SK: string },
+): Promise<boolean> {
+  const lock = itemLockKey(garage_id, item_id);
+  try {
+    await ddb().send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: table(),
+              Item: { ...lock, version: seenVersion + 1 },
+              ...(seenVersion === 0
+                ? { ConditionExpression: "attribute_not_exists(PK)" }
+                : {
+                    ConditionExpression: "version = :seen",
+                    ExpressionAttributeValues: { ":seen": seenVersion },
+                  }),
+            },
+          },
+          {
+            Put: {
+              TableName: table(),
+              Item: row,
+              ConditionExpression: "attribute_not_exists(PK)",
+            },
+          },
+        ],
+      }),
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string }).name === "TransactionCanceledException") return false;
+    throw err;
+  }
 }
 
 export async function listReservationsByGarage(garage_id: string): Promise<Reservation[]> {

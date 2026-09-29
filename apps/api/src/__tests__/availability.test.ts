@@ -3,6 +3,7 @@
 // deleted member.
 
 import { reservationKey, tenantUserKey } from "@garageborrow/shared";
+import type { Garage } from "@garageborrow/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../index.js";
@@ -26,6 +27,7 @@ import {
   installDdbMock,
   installFakeAuth,
   listAll,
+  onNextTransact,
   resetDdbStore,
   seedItem,
 } from "./_setup.js";
@@ -264,5 +266,98 @@ describe("notifier and deleted members", () => {
       (r) => r.PK === `USER#${HOWDY_PHONE}` || (r.PK === k.pk && r.SK === k.sk),
     );
     expect(leftovers).toEqual([]);
+  });
+});
+
+const activeLoans = (item: string) =>
+  listAll().filter((r) => String(r.SK).startsWith("LOAN#") && r["item_id"] === item);
+
+describe("concurrent borrows of the last free unit", () => {
+  it("refuses the borrow whose check was overtaken by another member's commit", async () => {
+    seedItemRecord({ id: "drill" });
+    seedMembership(FRIEND_PHONE, "family");
+    // FAMILY's check passed; before its write lands, FRIEND's borrow commits
+    // (loan written and the item's lock bumped in one transaction).
+    onNextTransact(() => {
+      seedLoanRecord({
+        item_id: "drill",
+        borrower_phone: FRIEND_PHONE,
+        status: "active",
+        borrowed_at: new Date().toISOString(),
+        expected_return_at: futureIso(3),
+      });
+      seedItem({ PK: `TENANT#${GARAGE_ID}`, SK: "LOCK#ITEM#drill", version: 1 });
+    });
+    const res = await borrow("drill");
+    expect(res.status).toBe(409);
+    expect(activeLoans("drill").map((l) => l["borrower_phone"])).toEqual([FRIEND_PHONE]);
+  });
+
+  it("lets exactly one of two simultaneous borrows succeed", async () => {
+    seedItemRecord({ id: "drill" });
+    seedMembership(FRIEND_PHONE, "family");
+    const statuses = (await Promise.all([borrow("drill"), borrow("drill", {}, FRIEND_PHONE)]))
+      .map((r) => r.status)
+      .sort();
+    expect(statuses).toEqual([201, 409]);
+    expect(activeLoans("drill")).toHaveLength(1);
+  });
+
+  it("serialises auto-approved reservations for the same window", async () => {
+    seedItemRecord({ id: "drill" });
+    seedMembership(FRIEND_PHONE, "family");
+    const body = { item_id: "drill", start_at: futureIso(1), end_at: futureIso(2) };
+    const statuses = (
+      await Promise.all([
+        post("/reservations", FAMILY_PHONE, body),
+        post("/reservations", FRIEND_PHONE, body),
+      ])
+    )
+      .map((r) => r.status)
+      .sort();
+    expect(statuses).toEqual([201, 409]);
+  });
+});
+
+describe("closed garage", () => {
+  const close = (g: Partial<Garage>) => seedGarage(g);
+
+  it("blocks borrows, requests and reservations while closed indefinitely", async () => {
+    close({ status: "closed_indefinitely" });
+    seedItemRecord({ id: "drill" });
+    expect((await borrow("drill")).status).toBe(409);
+    expect((await borrow("drill", {}, HOWDY_PHONE)).status).toBe(409); // approval path
+    const res = await post("/reservations", FAMILY_PHONE, {
+      item_id: "drill",
+      start_at: futureIso(10),
+      end_at: futureIso(11),
+    });
+    expect(res.status).toBe(409);
+    expect(listAll().filter((r) => /^(LOAN|RES)#/.test(String(r.SK)))).toHaveLength(0);
+  });
+
+  it("closed until a date: blocks now, allows reservations from the reopening day", async () => {
+    const reopen = futureIso(5).slice(0, 10);
+    close({ status: "closed_until", closed_until_date: reopen });
+    seedItemRecord({ id: "drill" });
+    expect((await borrow("drill")).status).toBe(409);
+    const during = await post("/reservations", FAMILY_PHONE, {
+      item_id: "drill",
+      start_at: futureIso(1),
+      end_at: futureIso(2),
+    });
+    expect(during.status).toBe(409);
+    const after = await post("/reservations", FAMILY_PHONE, {
+      item_id: "drill",
+      start_at: `${reopen}T09:00:00Z`,
+      end_at: `${reopen}T18:00:00Z`,
+    });
+    expect(after.status).toBe(201);
+  });
+
+  it("lends again once the closed-until date has passed", async () => {
+    close({ status: "closed_until", closed_until_date: "2020-01-01" });
+    seedItemRecord({ id: "drill" });
+    expect((await borrow("drill")).status).toBe(201);
   });
 });

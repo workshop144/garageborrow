@@ -38,6 +38,7 @@ export function resetDdbStore(): void {
   store.items.clear();
   queryPageSize = Infinity;
   afterNextScan = undefined;
+  beforeNextTransact = undefined;
 }
 
 export function seedItem(it: Item): void {
@@ -169,6 +170,13 @@ export function onNextScan(fn: () => void): void {
   afterNextScan = fn;
 }
 
+// Runs once, right before the next TransactWrite checks its conditions: lets a
+// test land a competing commit between a reader's check and its write.
+let beforeNextTransact: (() => void) | undefined;
+export function onNextTransact(fn: () => void): void {
+  beforeNextTransact = fn;
+}
+
 function evalFilter(
   it: Item,
   filterExpr: string | undefined,
@@ -279,6 +287,9 @@ export function installDdbMock(): void {
 
   // All-or-nothing: every condition is checked before any write is applied.
   mock.on(TransactWriteCommand).callsFake((input) => {
+    const hook = beforeNextTransact;
+    beforeNextTransact = undefined;
+    hook?.();
     const ops = input.TransactItems ?? [];
     try {
       for (const op of ops) {
