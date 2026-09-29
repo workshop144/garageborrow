@@ -11,7 +11,7 @@ import type {
 
 import { logger } from "../lib/logger.js";
 import { generateOtp } from "../lib/otp.js";
-import { bumpWindowCounter } from "../lib/repo.js";
+import { bumpWindowCounter, listUserProfiles } from "../lib/repo.js";
 import { sendSms } from "../lib/sns.js";
 
 const EXPIRY_MS = 5 * 60 * 1000;
@@ -40,8 +40,10 @@ function previousCode(
 // Budgets are per phone first. The shared daily cap bounds total spend, but a
 // phone's first SMS_RESERVED_PER_PHONE_PER_DAY texts do not depend on it: one
 // caller cycling a few known numbers can spend the shared budget, and that must
-// not lock every member out of sign-in for the day. Accounts are admin-created,
-// so the reserved allowance is bounded by the member count.
+// not lock every member out of sign-in for the day. The reserve is only for
+// current members (a live garage profile), so it is bounded by the member
+// count: a Cognito user left over from a revoked or expired invite gets no
+// texts beyond the shared cap.
 export const SMS_PER_PHONE_PER_HOUR = 5;
 export const SMS_PER_PHONE_PER_DAY = 10;
 export const SMS_RESERVED_PER_PHONE_PER_DAY = 2;
@@ -63,11 +65,24 @@ async function smsAllowed(phone: string): Promise<boolean> {
     return false;
   }
   const total = await bumpWindowCounter("sms-total", "all", day, expires);
-  if (total > SMS_DAILY_CAP && perPhoneDay > SMS_RESERVED_PER_PHONE_PER_DAY) {
-    logger.warn({ event: "sms_capped", scope: "daily" }, "daily SMS cap reached");
-    return false;
+  if (total > SMS_DAILY_CAP) {
+    if (perPhoneDay > SMS_RESERVED_PER_PHONE_PER_DAY || !(await isCurrentMember(phone))) {
+      logger.warn({ event: "sms_capped", scope: "daily" }, "daily SMS cap reached");
+      return false;
+    }
   }
   return true;
+}
+
+async function isCurrentMember(phone: string): Promise<boolean> {
+  try {
+    const profiles = await listUserProfiles(phone);
+    return profiles.some((p) => !p.deleted_at);
+  } catch (err) {
+    // Fail closed: over the shared cap, an unverifiable phone gets no text.
+    logger.warn({ err }, "sms_member_lookup_failed");
+    return false;
+  }
 }
 
 export const handler: CreateAuthChallengeTriggerHandler = async (event) => {

@@ -1,6 +1,11 @@
 import { api } from "./api";
 
-type SignResponse = { url: string; key: string; expires_in: number };
+type SignResponse = {
+  url: string;
+  key: string;
+  expires_in: number;
+  headers?: Record<string, string>;
+};
 
 // Two-step S3 upload: ask the API for a presigned PUT URL, then PUT the file
 // directly to S3. The returned `key` is what the API persists on the entity.
@@ -16,7 +21,8 @@ export async function uploadPhoto(
   });
   const res = await fetch(sign.url, {
     method: "PUT",
-    headers: { "Content-Type": file.type },
+    // Signed into the URL: If-None-Match makes it single-use.
+    headers: sign.headers ?? { "Content-Type": file.type, "If-None-Match": "*" },
     body: file,
   });
   if (!res.ok) {

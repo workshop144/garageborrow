@@ -93,6 +93,32 @@ describe("POST /wishlist — create + auto-vote", () => {
     );
     expect(audit).toHaveLength(1);
   });
+
+  it("rejects an oversized reference_url instead of storing a row every read loads", async () => {
+    seedAll();
+    const app = createApp();
+    const res = await app.request(`/v1/g/${GARAGE_ID}/wishlist`, {
+      method: "POST",
+      headers: {
+        ...authHeader(HOWDY_PHONE),
+        "content-type": "application/json",
+        "Idempotency-Key": "wish-big-url",
+      },
+      body: JSON.stringify({
+        item_name: "Ladder",
+        reference_url: `https://a.example/${"x".repeat(390_000)}`,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(listAll().filter((it) => String(it["SK"]).startsWith("WISH#"))).toHaveLength(0);
+    // An ordinary product link still works.
+    await createReq(
+      app,
+      HOWDY_PHONE,
+      { item_name: "Ladder", reference_url: `https://a.example/${"x".repeat(500)}` },
+      "wish-ok-url",
+    );
+  });
 });
 
 describe("POST/DELETE /wishlist/:id/vote — idempotent", () => {

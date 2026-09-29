@@ -10,7 +10,13 @@ import {
 import type { ReactNode } from "react";
 import { api } from "../api";
 import { captureError } from "../sentry";
-import { confirmOtp, refreshSession, signOut as cognitoSignOut, startSignIn } from "./cognito";
+import {
+  confirmOtp,
+  purgePersistedTokens,
+  refreshSession,
+  signOut as cognitoSignOut,
+  startSignIn,
+} from "./cognito";
 import type { AuthTokens } from "./cognito";
 
 type AuthState = {
@@ -39,6 +45,14 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     status: "anonymous",
   });
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tokensRef = useRef<AuthTokens | null>(null);
+  tokensRef.current = state.tokens;
+
+  // Nothing restores a session across reloads, so nothing may keep one:
+  // drop tokens an earlier build left in localStorage.
+  useEffect(() => {
+    purgePersistedTokens();
+  }, []);
 
   const scheduleRefresh = useCallback((tokens: AuthTokens, username: string) => {
     if (refreshTimer.current) {
@@ -52,6 +66,8 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
           setState((s) => ({ ...s, tokens: next, status: "authenticated" }));
           scheduleRefresh(next, username);
         } catch {
+          // Whatever the refresh error, the session is over: clear its tokens.
+          cognitoSignOut();
           setState({
             tokens: null,
             username: null,
@@ -113,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   );
 
   const signOut = useCallback(() => {
-    cognitoSignOut();
+    cognitoSignOut(tokensRef.current?.refreshToken);
     if (refreshTimer.current) {
       clearTimeout(refreshTimer.current);
       refreshTimer.current = null;

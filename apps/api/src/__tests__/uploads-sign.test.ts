@@ -41,6 +41,21 @@ describe("upload signing", () => {
     expect(signed.split(";")).toContain("content-length");
   });
 
+  it("signs If-None-Match so a URL cannot be replayed to overwrite its key", async () => {
+    const res = await sign(
+      { kind: "tool_photo", content_type: "image/png", content_length: 1_024 },
+      "k-once",
+    );
+    expect(res.status).toBe(200);
+    const { url, headers } = (await res.json()) as {
+      url: string;
+      headers: Record<string, string>;
+    };
+    const signed = new URL(url).searchParams.get("X-Amz-SignedHeaders") ?? "";
+    expect(signed.split(";")).toContain("if-none-match");
+    expect(headers["If-None-Match"]).toBe("*");
+  });
+
   it("refuses an upload over the cap, or one without a size", async () => {
     const tooBig = await sign(
       { kind: "tool_photo", content_type: "image/jpeg", content_length: MAX_UPLOAD_BYTES + 1 },

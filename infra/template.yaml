@@ -241,6 +241,10 @@ Resources:
             - Effect: Allow
               Action: dynamodb:UpdateItem
               Resource: !GetAtt GarageBorrowTable.Arn
+            # member lookup for the per-phone SMS reserve (profiles by phone)
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !Sub ${GarageBorrowTable.Arn}/index/byUser
 
   CreateAuthChallengeInvokePermission:
     Type: AWS::Lambda::Permission
@@ -284,6 +288,8 @@ Resources:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       ClientName: !Sub garageborrow-pwa-${Stage}
+      # sign-out revokes the refresh token (apps/web/src/lib/auth/cognito.ts)
+      EnableTokenRevocation: true
       UserPoolId: !Ref UserPool
       GenerateSecret: false # PKCE / public client used directly by the PWA.
       RefreshTokenValidity: 30
@@ -340,6 +346,18 @@ Resources:
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
+      # Browsers PUT photos straight to presigned URLs (apps/web/src/lib/uploadPhoto.ts).
+      # If-None-Match is signed into each URL so it can be used once.
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins:
+              - !Ref SiteUrl
+              - http://localhost:5173
+            AllowedHeaders:
+              - content-type
+              - if-none-match
+            MaxAge: 3600
       NotificationConfiguration:
         LambdaConfigurations:
           - Event: s3:ObjectCreated:*

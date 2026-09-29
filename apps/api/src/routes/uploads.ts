@@ -54,10 +54,21 @@ uploadRoutes.post("/v1/uploads/sign", async (c) => {
     Key: key,
     ContentType: body.content_type,
     ContentLength: body.content_length,
+    // One write per URL: S3 refuses (412) a PUT to a key that already has a
+    // current version. Signed, so the uploader cannot drop it; without it the
+    // URL could be replayed for 300 s, each PUT a retained noncurrent version
+    // and a resizer run, and the daily quota above would bound nothing.
+    IfNoneMatch: "*",
   });
   const url = await getSignedUrl(s3(), cmd, {
     expiresIn: 300,
-    signableHeaders: new Set(["content-length", "content-type"]),
+    signableHeaders: new Set(["content-length", "content-type", "if-none-match"]),
   });
-  return c.json({ url, key, expires_in: 300 });
+  // The client must send these headers exactly; they are part of the signature.
+  return c.json({
+    url,
+    key,
+    expires_in: 300,
+    headers: { "Content-Type": body.content_type, "If-None-Match": "*" },
+  });
 });

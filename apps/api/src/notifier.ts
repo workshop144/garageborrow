@@ -32,6 +32,7 @@ import { reserveSlot, releaseSlot } from "./lib/spam-cap.js";
 import { deliverInapp, deliverPush, deliverSms, type ChannelMessage } from "./lib/channels.js";
 import {
   getGarage,
+  getItem,
   getMembership,
   getUser,
   listLoansByGarage,
@@ -40,6 +41,7 @@ import {
   listWishlistRequests,
   queryAll,
 } from "./lib/repo.js";
+import { resolveItemAccess } from "@garageborrow/shared";
 import type {
   Loan,
   NotificationPrefs,
@@ -70,6 +72,14 @@ interface DispatchContext {
 export async function dispatch(ctx: DispatchContext): Promise<void> {
   const nowSec = Math.floor(ctx.now.getTime() / 1000);
 
+  // Soft-deleted users get nothing: they asked to leave, and every write below
+  // lands in rows keyed by their phone that the account cleaner must be able
+  // to remove for good.
+  if (ctx.user.deleted_at) {
+    logger.info({ type: ctx.type }, "notifier_skip_deleted_user");
+    return;
+  }
+
   // Per-(user, type, payload) dedup window.
   if (await shouldSkipDuplicate(ctx.user.phone, ctx.type, ctx.payload, nowSec)) {
     logger.info({ type: ctx.type }, "notifier_dedup_skip");
@@ -77,6 +87,10 @@ export async function dispatch(ctx: DispatchContext): Promise<void> {
   }
 
   const slot = await reserveSlot(ctx.garage_id, ctx.user.phone);
+  if (slot.gone) {
+    logger.info({ type: ctx.type }, "notifier_skip_missing_user");
+    return;
+  }
   if (!slot.allowed) {
     logger.info({ type: ctx.type, count: slot.count_after }, "notifier_spam_cap_drop");
     // Even when capped, write to the inbox so the inbox stays a complete
@@ -271,9 +285,24 @@ async function fanOutWaitlist(event: DirectInvokeEvent, now: Date): Promise<void
   const entries = await listWaitlist(event.garage_id, itemId);
   if (entries.length === 0) return;
   entries.sort((a: WaitlistEntry, b: WaitlistEntry) => a.joined_at.localeCompare(b.joined_at));
-  const head = entries[0];
-  if (!head) return;
-  const user = await getUser(event.garage_id, head.borrower_phone);
+  const item = await getItem(event.garage_id, itemId);
+  if (!item) return;
+  // Notify the first waiter who can still borrow it: a member who left, was
+  // deleted, or dropped below the item's tier must not hold up the queue or
+  // learn about an item hidden from them.
+  let user: User | undefined;
+  for (const entry of entries) {
+    const [candidate, membership] = await Promise.all([
+      getUser(event.garage_id, entry.borrower_phone),
+      getMembership(event.garage_id, entry.borrower_phone),
+    ]);
+    if (!candidate || candidate.deleted_at || !membership) continue;
+    if (resolveItemAccess(membership.tier, item.min_tier, item.auto_approve_tier) === "hidden") {
+      continue;
+    }
+    user = candidate;
+    break;
+  }
   if (!user) return;
   const copy = COPY["waitlist_unblocked"]!;
   await dispatch({

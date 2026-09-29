@@ -36,6 +36,17 @@ const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 // identity, runs the handler, then writes one AuditLogEntry to DDB if the
 // response was 2xx. Failures are logged but never propagate — auditing is
 // best-effort and must never block a user-visible mutation.
+// Store the path decoded, so an identifier in it (e.g. a member phone the web
+// client sent as %2B...) is in the same form as everywhere else in the table
+// and the account cleaner's scrub finds it.
+function canonicalPath(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export function audit(): MiddlewareHandler<AppEnv> {
   return async (c: Context<AppEnv>, next: Next) => {
     const method = c.req.method.toUpperCase();
@@ -65,7 +76,7 @@ export function audit(): MiddlewareHandler<AppEnv> {
 
     const details = c.get("audit_details");
     const ts = nowIso();
-    const path = new URL(c.req.url).pathname;
+    const path = canonicalPath(new URL(c.req.url).pathname);
     const httpMethod = method as "POST" | "PATCH" | "PUT" | "DELETE";
     const entry: AuditLogEntry = details
       ? {

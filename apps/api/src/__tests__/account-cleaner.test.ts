@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   donationKey,
@@ -7,7 +9,13 @@ import {
   waitlistKey,
 } from "@garageborrow/shared";
 
-import { pseudonymFor, runCleanup, scrubPhone, setCognitoClient } from "../account-cleaner.js";
+import {
+  getPendingScrub,
+  mentionsPhone,
+  runCleanup,
+  scrubPhone,
+  setCognitoClient,
+} from "../account-cleaner.js";
 import {
   FAMILY_PHONE,
   GARAGE_ID,
@@ -25,12 +33,20 @@ import {
   seedItem,
 } from "./_setup.js";
 
+const PSEUDONYM = /^deleted-user-[0-9a-f]{12}$/;
+const PSEUDONYM_ANYWHERE = /deleted-user-[0-9a-f]{12}/;
+let cognitoDeletes: string[] = [];
+
 beforeEach(() => {
   resetDdbStore();
   installDdbMock();
+  cognitoDeletes = [];
   // Cognito calls fail closed in tests — silence them by injecting a stub.
   setCognitoClient({
-    send: () => Promise.resolve({}),
+    send: (cmd: { input: { Username: string } }) => {
+      cognitoDeletes.push(cmd.input.Username);
+      return Promise.resolve({});
+    },
   } as never);
 });
 
@@ -99,8 +115,10 @@ describe("account-cleaner", () => {
     expect(counts.hard_deleted_users).toBe(1);
     expect(counts.records_anonymized).toBeGreaterThanOrEqual(4);
 
-    const replacement = pseudonymFor(FAMILY_PHONE);
     const all = listAll();
+    const loan = all.find((r) => r.SK?.startsWith?.("LOAN#"));
+    const replacement = loan?.["borrower_phone"];
+    expect(replacement).toMatch(PSEUDONYM);
     for (const row of all) {
       if (row["borrower_phone"] === FAMILY_PHONE) {
         throw new Error(`borrower_phone not anonymized on ${row.SK}`);
@@ -171,7 +189,7 @@ describe("account-cleaner", () => {
     expect(JSON.stringify(all)).not.toContain(FAMILY_PHONE);
     const audit = all.find((r) => r.SK === "AUDIT#2026-03-02#a1");
     expect(audit?.["actor_phone"]).toBe(OWNER_PHONE);
-    expect(JSON.stringify(audit)).toContain(pseudonymFor(FAMILY_PHONE));
+    expect(JSON.stringify(audit)).toMatch(PSEUDONYM_ANYWHERE);
   });
 
   it("resets the counter without rewriting the rest of a profile changed mid-sweep", async () => {
@@ -211,7 +229,7 @@ describe("account-cleaner", () => {
 
     const item = listAll().find((r) => r.SK === "ITEM#donated-1");
     expect(item?.["name"]).toBe("Cordless drill");
-    expect(item?.["donated_by_phone"]).toBe(pseudonymFor(FAMILY_PHONE));
+    expect(item?.["donated_by_phone"]).toMatch(PSEUDONYM);
   });
 
   it("re-reads a re-keyed row edited mid-sweep instead of writing the stale copy", async () => {
@@ -252,5 +270,95 @@ describe("account-cleaner", () => {
       "X",
       "+155555501009",
     ]);
+  });
+
+  it("uses a pseudonym that cannot be recomputed from the phone, one per user", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE, { deleted_at: "2026-03-01T12:00:00Z" });
+    seedMembership(FAMILY_PHONE, "family");
+    const pk = `TENANT#${GARAGE_ID}`;
+    seedItem({ PK: pk, SK: "ITEM#donated-1", id: "donated-1", donated_by_phone: FAMILY_PHONE });
+    seedItem({ PK: pk, SK: "DONATION#2026-03-02#d1", id: "d1", donor_phone: FAMILY_PHONE });
+
+    await runCleanup(new Date("2026-04-26T03:00:00Z"));
+
+    const all = listAll();
+    const a = all.find((r) => r.SK === "ITEM#donated-1")?.["donated_by_phone"];
+    const b = all.find((r) => r.SK === "DONATION#2026-03-02#d1")?.["donor_phone"];
+    expect(a).toMatch(PSEUDONYM);
+    expect(b).toBe(a);
+    const unkeyed = createHash("sha256").update(FAMILY_PHONE).digest("hex").slice(0, 12);
+    expect(a).not.toBe(`deleted-user-${unkeyed}`);
+    // The work row that held the phone is gone once the scrub completed.
+    expect(await getPendingScrub(FAMILY_PHONE)).toBeUndefined();
+  });
+
+  it("resumes an interrupted hard delete on the next run", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE, { deleted_at: "2026-03-01T12:00:00Z" });
+    seedMembership(FAMILY_PHONE, "family");
+    const dk = donationKey(GARAGE_ID, "2026-03-02", "don-1");
+    seedItem({ PK: dk.pk, SK: dk.sk, id: "don-1", donor_phone: FAMILY_PHONE });
+    // The whole-table scrub Scan fails (throttling, timeout) after the user
+    // rows were already deleted.
+    afterWholeTableScan(() => {
+      const err = new Error("Rate exceeded");
+      err.name = "ProvisionedThroughputExceededException";
+      throw err;
+    });
+
+    const first = await runCleanup(new Date("2026-04-26T03:00:00Z"));
+    expect(first.hard_deleted_users).toBe(0);
+    const userKey = tenantUserKey(GARAGE_ID, FAMILY_PHONE);
+    expect(listAll().find((r) => r.PK === userKey.pk && r.SK === userKey.sk)).toBeUndefined();
+    expect(cognitoDeletes).toEqual([]);
+    const pending = await getPendingScrub(FAMILY_PHONE);
+    expect(pending?.pseudonym).toMatch(PSEUDONYM);
+
+    const second = await runCleanup(new Date("2026-04-27T03:00:00Z"));
+    expect(second.hard_deleted_users).toBe(1);
+    const all = listAll();
+    expect(JSON.stringify(all)).not.toContain(FAMILY_PHONE.slice(1));
+    expect(all.find((r) => r["id"] === "don-1")?.["donor_phone"]).toBe(pending?.pseudonym);
+    expect(cognitoDeletes).toEqual([FAMILY_PHONE]);
+    expect(await getPendingScrub(FAMILY_PHONE)).toBeUndefined();
+  });
+
+  it("scrubs the percent-encoded phone an audit entry kept in its request path", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE, { deleted_at: "2026-03-01T12:00:00Z" });
+    seedMembership(FAMILY_PHONE, "family");
+    const pk = `TENANT#${GARAGE_ID}`;
+    const encoded = encodeURIComponent(FAMILY_PHONE);
+    seedItem({
+      PK: pk,
+      SK: "AUDIT#2026-03-02#a2",
+      id: "a2",
+      actor_phone: OWNER_PHONE,
+      entity_id: FAMILY_PHONE,
+      path: `/v1/g/${GARAGE_ID}/admin/members/${encoded}`,
+    });
+    // Only the encoded form: still found and scrubbed.
+    seedItem({
+      PK: pk,
+      SK: "AUDIT#2026-03-02#a3",
+      id: "a3",
+      actor_phone: OWNER_PHONE,
+      entity_id: GARAGE_ID,
+      path: `/v1/g/${GARAGE_ID}/admin/invites/${encoded.toLowerCase()}`,
+    });
+
+    await runCleanup(new Date("2026-04-26T03:00:00Z"));
+
+    const all = listAll();
+    expect(JSON.stringify(all)).not.toContain(FAMILY_PHONE.slice(1));
+    expect(all.find((r) => r["id"] === "a2")?.["path"]).toMatch(
+      /\/admin\/members\/deleted-user-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("recognises the encoded phone but not a longer number", () => {
+    expect(mentionsPhone({ path: "/m/%2B15555550100" }, "+15555550100")).toBe(true);
+    expect(mentionsPhone({ path: "/m/%2B155555501009" }, "+15555550100")).toBe(false);
   });
 });

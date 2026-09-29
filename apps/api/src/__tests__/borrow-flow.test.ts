@@ -41,7 +41,7 @@ describe("POST /v1/g/:garage/loans — borrow flow", () => {
     expect(body.loan.borrower_phone).toBe(FAMILY_PHONE);
   });
 
-  it("403s when access resolves to hidden", async () => {
+  it("404s when access resolves to hidden (same answer as a missing item)", async () => {
     seedGarage();
     seedUser(HOWDY_PHONE);
     seedMembership(HOWDY_PHONE, "howdy");
@@ -53,9 +53,9 @@ describe("POST /v1/g/:garage/loans — borrow flow", () => {
       headers: { ...authHeader(HOWDY_PHONE), "content-type": "application/json" },
       body: JSON.stringify({ item_id: "fancy", liability_acknowledged: true }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("forbidden");
+    expect(body.error.code).toBe("not_found");
   });
 
   it("returns 202 + reservation when access is request (approval required)", async () => {
