@@ -20,9 +20,12 @@ export const PosInt = z.number().int().positive();
 // Zod's `.url()` accepts any URL the WHATWG URL constructor parses, including
 // `javascript:`, `data:`, and `vbscript:` — which become stored XSS when the
 // value is later rendered as an anchor href. Use `HttpUrl` for any field that
-// might surface in the UI.
+// might surface in the UI. Length is bounded because rows holding these are
+// read back whole (a wishlist page returns up to 100 rows in one response).
+export const HTTP_URL_MAX_LENGTH = 2048;
 export const HttpUrl = z
   .string()
+  .max(HTTP_URL_MAX_LENGTH)
   .url()
   .refine((u) => /^https?:\/\//i.test(u), {
     message: "must start with http:// or https://",

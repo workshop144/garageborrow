@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleDirectInvoke, dispatch } from "../notifier.js";
 import { setPushDriver, setSmsDriver } from "../lib/channels.js";
-import { FAMILY_PHONE, GARAGE_ID, seedGarage, seedMembership, seedUser } from "./_fixtures.js";
+import {
+  FAMILY_PHONE,
+  GARAGE_ID,
+  seedGarage,
+  seedItemRecord,
+  seedMembership,
+  seedUser,
+} from "./_fixtures.js";
 import { installDdbMock, listAll, resetDdbStore, seedItem } from "./_setup.js";
 import type { Notification, PushSubscription } from "@garageborrow/shared";
 
@@ -133,6 +140,7 @@ describe("notifier direct invoke", () => {
     const smsSpy = vi.fn(() => Promise.resolve());
     setPushDriver(pushSpy);
     setSmsDriver(smsSpy);
+    seedItemRecord({ id: "item-1" });
     seedItem({
       PK: `TENANT#${GARAGE_ID}`,
       SK: `WAIT#item-1#2026-04-25T12:00:00Z#${FAMILY_PHONE}`,

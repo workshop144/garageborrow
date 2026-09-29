@@ -4,8 +4,12 @@
 //      such user, drop the per-tenant USER and MEMBER records and the user
 //      partition, then replace every remaining occurrence of their phone in
 //      the table (any attribute, nested snapshots such as audit before/after,
-//      and keys such as waitlist sort keys) with a deterministic
-//      SHA-256-prefixed pseudonym, and remove the Cognito identity.
+//      and keys such as waitlist sort keys) with a random pseudonym, and
+//      remove the Cognito identity. The pseudonym is not derived from the
+//      phone, so retained history cannot be re-linked by hashing a number.
+//      Before anything is deleted, a pending-scrub row records the phone and
+//      its pseudonym; it is removed only once the scrub and the Cognito delete
+//      both finished, so an interrupted or partial run resumes the next night.
 //
 //   2. Reset the per-day notifications_sent_today counter on every user
 //      record. The counter resets at user-local midnight; running this at
@@ -15,7 +19,7 @@
 // the cross-entity scrubbing — the repo layer is shaped for one-record-at-
 // a-time access and we want a single Scan + bulk update here.
 
-import { createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 import {
   CognitoIdentityProviderClient,
@@ -24,6 +28,9 @@ import {
 import {
   BatchWriteCommand,
   DeleteCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
   ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -50,10 +57,75 @@ export function setCognitoClient(c: CognitoIdentityProviderClient | undefined): 
   cachedCognito = c;
 }
 
-export function pseudonymFor(phone: string): string {
-  // 12-char prefix is enough collision-space for our scale and short enough
-  // that the synthetic phone fits ordinary display widgets.
-  return `deleted-user-${createHash("sha256").update(phone).digest("hex").slice(0, 12)}`;
+// Random, never derived from the phone: an unkeyed hash of a phone number can
+// be recomputed by anyone who knows (or enumerates) the number. 12 hex chars is
+// plenty of collision space at our scale and fits ordinary display widgets.
+export function newPseudonym(): string {
+  return `deleted-user-${randomBytes(6).toString("hex")}`;
+}
+
+// Durable hard-delete work queue: one row per phone still being scrubbed. It
+// holds the raw phone only until the scrub completes, and the scrub skips it.
+export const PENDING_SCRUB_PK = "CLEANER#PENDING";
+
+interface PendingScrub {
+  PK: string;
+  SK: string;
+  phone: string;
+  pseudonym: string;
+  created_at: string;
+}
+
+async function ensurePendingScrub(phone: string, now: Date): Promise<void> {
+  try {
+    await ddb().send(
+      new PutCommand({
+        TableName: env.tableName(),
+        Item: {
+          PK: PENDING_SCRUB_PK,
+          SK: `PHONE#${phone}`,
+          phone,
+          pseudonym: newPseudonym(),
+          created_at: now.toISOString(),
+        } satisfies PendingScrub,
+        ConditionExpression: "attribute_not_exists(PK)",
+      }),
+    );
+  } catch (err) {
+    // Already queued by an earlier run: keep its pseudonym so every row of
+    // this user ends up under the same one.
+    if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+  }
+}
+
+async function listPendingScrubs(): Promise<PendingScrub[]> {
+  const out: PendingScrub[] = [];
+  let last: Record<string, unknown> | undefined;
+  do {
+    const r = await ddb().send(
+      new QueryCommand({
+        TableName: env.tableName(),
+        KeyConditionExpression: "PK = :pk",
+        ExpressionAttributeValues: { ":pk": PENDING_SCRUB_PK },
+        ConsistentRead: true,
+        ...(last ? { ExclusiveStartKey: last } : {}),
+      }),
+    );
+    out.push(...((r.Items ?? []) as PendingScrub[]));
+    last = r.LastEvaluatedKey;
+  } while (last);
+  return out;
+}
+
+export async function getPendingScrub(phone: string): Promise<PendingScrub | undefined> {
+  const r = await ddb().send(
+    new GetCommand({
+      TableName: env.tableName(),
+      Key: { PK: PENDING_SCRUB_PK, SK: `PHONE#${phone}` },
+      ConsistentRead: true,
+    }),
+  );
+  return r.Item as PendingScrub | undefined;
 }
 
 async function scanAll(opts: {
@@ -121,13 +193,37 @@ export async function runCleanup(now: Date): Promise<DeleteCounts> {
     byPhone.set(phone, entry);
   }
 
-  for (const [phone, entry] of byPhone) {
-    await deleteUserRecords(phone, entry.pks);
-    const anonymized = await anonymizeAcrossEntities(phone);
-    counts.records_anonymized += anonymized;
-    await deleteCognitoUser(phone);
-    counts.hard_deleted_users++;
-    logger.info({ count: anonymized }, "cleaner_hard_deleted_user");
+  // Queue every due phone before touching its rows: deleting the USER rows
+  // destroys the selector above, so the queue is what lets a failed or timed
+  // out scrub resume on the next run.
+  for (const phone of byPhone.keys()) await ensurePendingScrub(phone, now);
+
+  for (const pending of await listPendingScrubs()) {
+    const phone = pending.phone;
+    try {
+      await deleteUserRecords(phone, byPhone.get(phone)?.pks ?? []);
+      const scrub = await anonymizeAcrossEntities(phone, pending.pseudonym);
+      counts.records_anonymized += scrub.written;
+      const cognitoGone = await deleteCognitoUser(phone);
+      if (scrub.complete && cognitoGone) {
+        await ddb().send(
+          new DeleteCommand({
+            TableName: env.tableName(),
+            Key: { PK: pending.PK, SK: pending.SK },
+          }),
+        );
+        counts.hard_deleted_users++;
+        logger.info({ count: scrub.written }, "cleaner_hard_deleted_user");
+      } else {
+        logger.error(
+          { scrub_complete: scrub.complete, cognito_deleted: cognitoGone },
+          "cleaner_hard_delete_incomplete_will_retry",
+        );
+      }
+    } catch (err) {
+      // Leave the pending row: the next run resumes this phone.
+      logger.error({ err }, "cleaner_hard_delete_failed_will_retry");
+    }
   }
 
   // Job 2: reset notifications_sent_today on every user record.
@@ -163,13 +259,23 @@ export async function runCleanup(now: Date): Promise<DeleteCounts> {
   return counts;
 }
 
-// Replaces the phone wherever it appears in a value: top-level attributes,
-// nested snapshots (audit before/after), arrays, and composite keys. The
+// Matches the phone as stored ("+15555550100") and percent-encoded the way it
+// appears in request paths the audit log recorded ("%2B15555550100"). The
 // digit guard keeps a shorter number from matching inside a longer one.
+function phonePattern(phone: string): RegExp {
+  if (/^\+\d+$/.test(phone)) return new RegExp(`(?:\\+|%2[Bb])${phone.slice(1)}(?!\\d)`, "g");
+  return new RegExp(`${phone.replace(/[^\d]/g, (ch) => `\\${ch}`)}(?!\\d)`, "g");
+}
+
+export function mentionsPhone(value: unknown, phone: string): boolean {
+  return phonePattern(phone).test(JSON.stringify(value));
+}
+
+// Replaces the phone wherever it appears in a value: top-level attributes,
+// nested snapshots (audit before/after), arrays, and composite keys.
 export function scrubPhone(value: unknown, phone: string, replacement: string): unknown {
   if (typeof value === "string") {
-    const re = new RegExp(`${phone.replace(/[^\d]/g, (ch) => `\\${ch}`)}(?!\\d)`, "g");
-    return value.replace(re, replacement);
+    return value.replace(phonePattern(phone), replacement);
   }
   if (Array.isArray(value)) return value.map((v) => scrubPhone(v, phone, replacement));
   if (value && typeof value === "object") {
@@ -180,9 +286,12 @@ export function scrubPhone(value: unknown, phone: string, replacement: string): 
   return value;
 }
 
-async function anonymizeAcrossEntities(phone: string): Promise<number> {
-  const replacement = pseudonymFor(phone);
+async function anonymizeAcrossEntities(
+  phone: string,
+  replacement: string,
+): Promise<{ written: number; complete: boolean }> {
   let n = 0;
+  let complete = true;
   // Votes are dropped rather than kept under a pseudonym.
   const votes = await scanAll({
     filterExpression: "voter_phone = :p",
@@ -196,30 +305,33 @@ async function anonymizeAcrossEntities(phone: string): Promise<number> {
     n++;
   }
   // Copies of the phone are not limited to the *_phone attributes: accepted
-  // donations carry donated_by_phone, audit entries embed whole records, and
-  // some sort keys (waitlist) contain it. Walk the whole table, as the rest of
-  // this job does, and rewrite every row that still mentions it. The Scan is a
-  // snapshot: rewriteRow writes only the scrubbed attributes and only while they
-  // still hold the scanned values, so an edit made mid-sweep is never reverted
-  // (it re-reads and scrubs the current row instead).
+  // donations carry donated_by_phone, audit entries embed whole records (and
+  // the request path, percent-encoded), and some sort keys (waitlist) contain
+  // it. Walk the whole table, as the rest of this job does, and rewrite every
+  // row that still mentions it. The Scan is a snapshot: rewriteRow writes only
+  // the scrubbed attributes and only while they still hold the scanned values,
+  // so an edit made mid-sweep is never reverted (it re-reads and scrubs the
+  // current row instead).
   const rows = await scanAll({});
   for (const r of rows) {
     const snapshot = r as Row;
-    if (!JSON.stringify(snapshot).includes(phone)) continue;
+    if (snapshot.PK === PENDING_SCRUB_PK) continue;
+    if (!mentionsPhone(snapshot, phone)) continue;
     const outcome = await rewriteRow({
       table: env.tableName(),
       snapshot,
       transform: (row) =>
-        JSON.stringify(row).includes(phone) ? (scrubPhone(row, phone, replacement) as Row) : null,
+        mentionsPhone(row, phone) ? (scrubPhone(row, phone, replacement) as Row) : null,
     });
     if (outcome === "written") n++;
     if (outcome === "gave_up") {
-      // Five conflicting edits in a row; the user rows are already gone, so a
-      // later run will not revisit this phone. Surface it for a manual re-run.
+      // Five conflicting edits in a row: the pending row stays, so the next
+      // run scrubs this phone again.
+      complete = false;
       logger.error({ sk_prefix: snapshot.SK.split("#")[0] }, "cleaner_scrub_gave_up");
     }
   }
-  return n;
+  return { written: n, complete };
 }
 
 async function deleteUserRecords(phone: string, pks: string[]): Promise<void> {
@@ -266,16 +378,20 @@ async function deleteUserPartition(phone: string): Promise<void> {
   }
 }
 
-async function deleteCognitoUser(phone: string): Promise<void> {
+// True once the Cognito identity is gone (deleted now or already absent).
+async function deleteCognitoUser(phone: string): Promise<boolean> {
   const userPoolId = env.userPoolId();
   if (!userPoolId) {
     logger.debug({}, "cleaner_no_user_pool_skipping_cognito");
-    return;
+    return true;
   }
   try {
     await cognito().send(new AdminDeleteUserCommand({ UserPoolId: userPoolId, Username: phone }));
+    return true;
   } catch (err) {
+    if ((err as { name?: string }).name === "UserNotFoundException") return true;
     logger.warn({ err }, "cleaner_cognito_delete_failed");
+    return false;
   }
 }
 

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
+import { assertAvailable } from "../lib/availability.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { getItem, putReservation } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
@@ -33,15 +34,21 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
   const item = await getItem(garage.id, body.item_id);
   if (!item) throw new ApiError("not_found", "Item not found");
   const access = resolveItemAccess(membership.tier, item.min_tier, item.auto_approve_tier);
-  if (access === "hidden") {
-    throw new ApiError("forbidden", "You don't have access to this item");
-  }
+  // Same answer as a missing item: tier-hidden items are not acknowledged.
+  if (access === "hidden") throw new ApiError("not_found", "Item not found");
   const approvalRequired = access === "request" || item.requires_approval;
+  const instanceId = await assertAvailable({
+    item,
+    instanceId: body.instance_id,
+    borrowerPhone: user.phone,
+    window: { start: Date.parse(body.start_at), end: Date.parse(body.end_at) },
+    commits: !approvalRequired,
+  });
   const reservation: Reservation = {
     id: newId(),
     garage_id: garage.id,
     item_id: item.id,
-    ...(body.instance_id ? { instance_id: body.instance_id } : {}),
+    ...(instanceId ? { instance_id: instanceId } : {}),
     borrower_phone: user.phone,
     start_at: body.start_at,
     end_at: body.end_at,

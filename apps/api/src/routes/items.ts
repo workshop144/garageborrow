@@ -326,11 +326,23 @@ itemRoutes.use("/v1/g/:garage/items/:id/waitlist", idempotency());
 itemRoutes.post("/v1/g/:garage/items/:id/waitlist", async (c) => {
   const garage = mustGarage(c);
   const user = mustUser(c);
+  const membership = mustMembership(c);
   const itemId = c.req.param("id");
   if (!itemId) throw new ApiError("bad_request", "Missing item id");
   const item = await getItem(garage.id, itemId);
   if (!item) throw new ApiError("not_found", "Item not found");
+  // Same gate as item detail: a tier-hidden item answers exactly like a
+  // missing one, so the waitlist is not an existence oracle for it.
+  const access = resolveItemAccess(membership.tier, item.min_tier, item.auto_approve_tier);
+  if (access === "hidden") throw new ApiError("not_found", "Item not found");
+  if (item.status === "retired" || item.status === "lost") {
+    throw new ApiError("conflict", "This item is no longer lendable");
+  }
   const existing = await listWaitlist(garage.id, itemId);
+  // One place in line per member; a second entry would hold two spots.
+  if (existing.some((w) => w.borrower_phone === user.phone)) {
+    throw new ApiError("conflict", "You're already on the waitlist for this item");
+  }
   const ts = nowIso();
   const entry = {
     id: newId(),

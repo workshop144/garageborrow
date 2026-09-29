@@ -41,6 +41,17 @@ function makeEvent(phone = "+15555550123"): CreateAuthChallengeTriggerEvent {
   };
 }
 
+function seedProfile(phone: string, extra: Record<string, unknown> = {}): void {
+  seedItem({
+    PK: "TENANT#g1",
+    SK: `USER#${phone}`,
+    GSI1PK: `USER#${phone}`,
+    GSI1SK: "USER#g1",
+    phone,
+    ...extra,
+  });
+}
+
 async function invoke(
   event: CreateAuthChallengeTriggerEvent,
 ): Promise<CreateAuthChallengeTriggerEvent> {
@@ -139,9 +150,22 @@ describe("create-auth-challenge", () => {
   it("still texts a member's first codes of the day after the shared daily budget is spent", async () => {
     const day = new Date().toISOString().slice(0, 10);
     seedItem({ PK: "RATELIMIT#sms-total", SK: `all#${day}`, count: 1_000_000 });
+    seedProfile("+15555550177");
     const result = await invoke(makeEvent("+15555550177"));
     expect(sns.commandCalls(PublishCommand)).toHaveLength(1);
     expect(result.response.privateChallengeParameters["code"]).toMatch(/^\d{6}$/);
+  });
+
+  it("gives no reserve past the shared cap to a Cognito user who is not a member", async () => {
+    // e.g. left over from a revoked or expired invite, or a deleted member
+    const day = new Date().toISOString().slice(0, 10);
+    seedItem({ PK: "RATELIMIT#sms-total", SK: `all#${day}`, count: 1_000_000 });
+    seedProfile("+15555550178", { deleted_at: "2026-01-01T00:00:00Z" });
+    const stale = await invoke(makeEvent("+15555550179"));
+    const deleted = await invoke(makeEvent("+15555550178"));
+    expect(sns.commandCalls(PublishCommand)).toHaveLength(0);
+    expect(stale.response.privateChallengeParameters["code"]).toBe("");
+    expect(deleted.response.privateChallengeParameters["code"]).toBe("");
   });
 
   it("caps each phone per day, so cycling a few numbers cannot drain the shared budget", async () => {

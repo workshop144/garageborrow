@@ -52,4 +52,13 @@ describe("verify-auth-challenge", () => {
     const result = await invoke(makeEvent({ code: "123456", expiresAt: past, answer: "123456" }));
     expect(result.response.answerCorrect).toBe(false);
   });
+
+  it("rejects answers that are not a 6-digit code, including an empty expected code", async () => {
+    for (const answer of ["", "12345", "1234567", " 123456", "12345a"]) {
+      const r = await invoke(makeEvent({ code: "123456", expiresAt: future, answer }));
+      expect(r.response.answerCorrect).toBe(false);
+    }
+    const capped = await invoke(makeEvent({ code: "", expiresAt: future, answer: "" }));
+    expect(capped.response.answerCorrect).toBe(false);
+  });
 });

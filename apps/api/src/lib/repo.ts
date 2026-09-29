@@ -369,6 +369,18 @@ export async function putReservation(r: Reservation): Promise<void> {
   );
 }
 
+export async function listReservationsByGarage(garage_id: string): Promise<Reservation[]> {
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: {
+      ":pk": `TENANT#${garage_id}`,
+      ":sk": "RES#",
+    },
+  });
+  return (r.Items ?? []) as Reservation[];
+}
+
 // ─────────────────────────── Waitlist ─────────────────────────
 
 export async function putWaitlist(w: WaitlistEntry): Promise<void> {
