@@ -10,7 +10,7 @@
     "url": "https://github.com/broots144/garageborrow.git"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.12.0",
     "pnpm": ">=9.0.0"
   },
   "packageManager": "pnpm@9.12.0",
@@ -27,20 +27,21 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
     "@typescript-eslint/eslint-plugin": "^8.72.1",
     "@typescript-eslint/parser": "^8.72.1",
-    "eslint": "^9.12.0",
-    "eslint-config-prettier": "^9.1.0",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react": "^7.37.1",
-    "eslint-plugin-react-hooks": "^5.0.0",
-    "globals": "^15.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "husky": "^9.1.6",
     "lint-staged": "^17.6.0",
     "prettier": "^3.9.10",
-    "typescript": "^5.6.2",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^2.1.2"
+    "vitest": "^5.0.5"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
@@ -50,5 +51,12 @@
     "*.{json,md,yml,yaml,css}": [
       "prettier --write"
     ]
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "eslint-plugin-react>eslint": "10"
+      }
+    }
   }
 }

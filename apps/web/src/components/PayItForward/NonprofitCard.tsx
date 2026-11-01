@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import type { NonprofitOrg } from "@garageborrow/shared";
 
 import { safeHref } from "../../lib/safeHref";

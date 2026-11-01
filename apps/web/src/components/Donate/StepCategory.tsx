@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useId, useMemo, useState } from "react";
 
 import { useGarageItems } from "../../hooks/useGarageItems";

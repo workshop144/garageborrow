@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useState } from "react";
 import type { TierName } from "@garageborrow/shared";
 
@@ -47,7 +48,7 @@ export function InvitesPanel(): JSX.Element {
           aria-label="Phone to invite"
           value={phone}
           onChange={(e) => setPhone(formatAsYouType(e.target.value))}
-          className="flex-1 min-w-[10rem] rounded-md border border-workshop/20 dark:border-surface-light/20 bg-transparent px-3 py-2"
+          className="flex-1 min-w-40 rounded-md border border-workshop/20 dark:border-surface-light/20 bg-transparent px-3 py-2"
         />
         <select
           aria-label="Starting tier"

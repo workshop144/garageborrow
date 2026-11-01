@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import {
   createContext,
   useCallback,
@@ -45,8 +46,6 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     status: "anonymous",
   });
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tokensRef = useRef<AuthTokens | null>(null);
-  tokensRef.current = state.tokens;
 
   // Nothing restores a session across reloads, so nothing may keep one:
   // drop tokens an earlier build left in localStorage.
@@ -54,29 +53,33 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     purgePersistedTokens();
   }, []);
 
-  const scheduleRefresh = useCallback((tokens: AuthTokens, username: string) => {
-    if (refreshTimer.current) {
-      clearTimeout(refreshTimer.current);
-    }
-    const ms = Math.max(tokens.expiresAt - Date.now() - REFRESH_LEEWAY_MS, 5_000);
-    refreshTimer.current = setTimeout(() => {
-      void (async () => {
-        try {
-          const next = await refreshSession(tokens.refreshToken, username);
-          setState((s) => ({ ...s, tokens: next, status: "authenticated" }));
-          scheduleRefresh(next, username);
-        } catch {
-          // Whatever the refresh error, the session is over: clear its tokens.
-          cognitoSignOut();
-          setState({
-            tokens: null,
-            username: null,
-            pendingPhone: null,
-            status: "anonymous",
-          });
-        }
-      })();
-    }, ms);
+  const scheduleRefresh = useCallback((initial: AuthTokens, username: string) => {
+    // Each successful refresh schedules the next one for the new tokens.
+    const schedule = (tokens: AuthTokens): void => {
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
+      }
+      const ms = Math.max(tokens.expiresAt - Date.now() - REFRESH_LEEWAY_MS, 5_000);
+      refreshTimer.current = setTimeout(() => {
+        void (async () => {
+          try {
+            const next = await refreshSession(tokens.refreshToken, username);
+            setState((s) => ({ ...s, tokens: next, status: "authenticated" }));
+            schedule(next);
+          } catch {
+            // Whatever the refresh error, the session is over: clear its tokens.
+            cognitoSignOut();
+            setState({
+              tokens: null,
+              username: null,
+              pendingPhone: null,
+              status: "anonymous",
+            });
+          }
+        })();
+      }, ms);
+    };
+    schedule(initial);
   }, []);
 
   useEffect(() => {
@@ -128,8 +131,9 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     [state.pendingPhone, scheduleRefresh],
   );
 
+  const refreshToken = state.tokens?.refreshToken;
   const signOut = useCallback(() => {
-    cognitoSignOut(tokensRef.current?.refreshToken);
+    cognitoSignOut(refreshToken);
     if (refreshTimer.current) {
       clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
@@ -140,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       pendingPhone: null,
       status: "anonymous",
     });
-  }, []);
+  }, [refreshToken]);
 
   // The API authorises on the ID token: it carries the verified phone number (the access token does not).
   const getIdToken = useCallback(() => state.tokens?.idToken ?? null, [state.tokens]);

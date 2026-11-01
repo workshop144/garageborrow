@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { Link } from "react-router-dom";
 
 import { DONATE_STEP_ORDER, useDonate } from "../../hooks/useDonate";

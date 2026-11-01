@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "framer-motion";

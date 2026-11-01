@@ -21,8 +21,8 @@ reservationRoutes.use("/v1/g/:garage/reservations", requireAuth(), loadGarageCon
 const ReservationCreateSchema = z.object({
   item_id: z.string().min(1),
   instance_id: z.string().min(1).optional(),
-  start_at: z.string().datetime({ offset: true }),
-  end_at: z.string().datetime({ offset: true }),
+  start_at: z.iso.datetime({ offset: true }),
+  end_at: z.iso.datetime({ offset: true }),
 });
 
 reservationRoutes.use("/v1/g/:garage/reservations", idempotency());

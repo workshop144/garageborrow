@@ -88,7 +88,7 @@ interface PushPayload {
 
 self.addEventListener("push", (event) => {
   if (!event.data) return;
-  let payload: PushPayload = {};
+  let payload: PushPayload;
   try {
     payload = (event.data.json() as PushPayload) ?? {};
   } catch {

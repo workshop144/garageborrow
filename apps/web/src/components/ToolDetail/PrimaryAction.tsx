@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import type { ItemDetail } from "@garageborrow/shared";
 
 export type PrimaryActionMode = "borrow_instant" | "borrow_request" | "waitlist" | "family_only";

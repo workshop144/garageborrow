@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useMemo, useState } from "react";
 import type { GarageMembership } from "@garageborrow/shared";
 

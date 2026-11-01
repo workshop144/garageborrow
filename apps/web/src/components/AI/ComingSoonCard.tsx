@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useProfile, useUpdateProfile } from "../../hooks/useProfile";
 
 export function ComingSoonCard(): JSX.Element {
@@ -11,7 +12,7 @@ export function ComingSoonCard(): JSX.Element {
 
   return (
     <section
-      className="relative overflow-hidden rounded-xl border border-gold-bright/40 bg-gradient-to-br from-gold-bright/30 via-gold-primary/10 to-tier-howdy/20 p-4 shadow-[0_4px_12px_rgba(184,140,38,0.18)]"
+      className="relative overflow-hidden rounded-xl border border-gold-bright/40 bg-linear-to-br from-gold-bright/30 via-gold-primary/10 to-tier-howdy/20 p-4 shadow-[0_4px_12px_rgba(184,140,38,0.18)]"
       data-testid="ai-coming-soon"
     >
       <div className="flex items-start justify-between gap-3">

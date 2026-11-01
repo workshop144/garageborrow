@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import type { JSX } from "react";
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../../lib/api";
@@ -55,15 +56,20 @@ export function RequestModal({
   const qc = useQueryClient();
   const [step, setStep] = useState<Step>("name");
   const [draft, setDraft] = useState<Draft>(EMPTY);
-  const idemKeyRef = useRef<string>(newIdempotencyKey());
+  const [idemKey, setIdemKey] = useState(newIdempotencyKey);
 
-  useEffect(() => {
+  // Start a fresh request (and idempotency key) each time the modal opens.
+  const [openedFor, setOpenedFor] = useState<{ open: boolean; initialName?: string }>({
+    open: false,
+  });
+  if (openedFor.open !== open || openedFor.initialName !== initialName) {
+    setOpenedFor({ open, ...(initialName !== undefined ? { initialName } : {}) });
     if (open) {
       setDraft({ ...EMPTY, itemName: initialName ?? "" });
       setStep("name");
-      idemKeyRef.current = newIdempotencyKey();
+      setIdemKey(newIdempotencyKey());
     }
-  }, [open, initialName]);
+  }
 
   const submit = useMutation<WishlistRow, Error, void>({
     mutationFn: async () => {
@@ -79,7 +85,7 @@ export function RequestModal({
       const r = await api.post<{ request: WishlistRow }>(
         `/g/${encodeURIComponent(garageSlug)}/wishlist`,
         body,
-        { idempotencyKey: idemKeyRef.current },
+        { idempotencyKey: idemKey },
       );
       return r.request;
     },

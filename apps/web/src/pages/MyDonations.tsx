@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { AppShell } from "../components/AppShell";
 import { MyDonationsList } from "../components/Donate/MyDonationsList";
 

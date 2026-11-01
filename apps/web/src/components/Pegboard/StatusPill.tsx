@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import type { GarageItem } from "../../hooks/useGarageItems";
 
 export type PillVariant = "available" | "out" | "partial" | "request" | "family-only" | "neutral";

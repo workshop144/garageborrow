@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import type { DonationCondition } from "@garageborrow/shared";
 
 type Props = {

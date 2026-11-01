@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { AdminLayout } from "../../components/Admin/AdminLayout";
 import { SettingsForm } from "../../components/Admin/Settings/SettingsForm";
 

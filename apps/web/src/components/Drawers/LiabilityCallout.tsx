@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import type { LiabilityTier } from "../../lib/borrow-copy";
 
 type Props = {

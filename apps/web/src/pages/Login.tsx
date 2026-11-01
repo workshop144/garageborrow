@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth/AuthContext";
@@ -110,7 +111,7 @@ export default function Login(): JSX.Element {
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-xl border border-workshop/10 dark:border-surface-light/10 bg-surface-light dark:bg-surface-dark p-6 shadow-sm">
+      <div className="w-full max-w-sm rounded-xl border border-workshop/10 dark:border-surface-light/10 bg-surface-light dark:bg-surface-dark p-6 shadow-xs">
         <h1 className="font-heading text-3xl text-gold-bright">Howdy.</h1>
         <p className="mt-1 text-sm opacity-70">Phone number first, code second.</p>
 
@@ -124,7 +125,7 @@ export default function Login(): JSX.Element {
                 placeholder="(317) 555-1234"
                 value={phoneInput}
                 onChange={(e) => setPhoneInput(formatAsYouType(e.target.value))}
-                className="mt-1 w-full rounded-md border border-workshop/20 dark:border-surface-light/20 bg-transparent px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-gold-bright"
+                className="mt-1 w-full rounded-md border border-workshop/20 dark:border-surface-light/20 bg-transparent px-3 py-2 text-base focus:outline-hidden focus:ring-2 focus:ring-gold-bright"
               />
             </label>
             <button
@@ -150,7 +151,7 @@ export default function Login(): JSX.Element {
                 maxLength={6}
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                className="mt-1 w-full rounded-md border border-workshop/20 dark:border-surface-light/20 bg-transparent px-3 py-2 text-lg tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-gold-bright"
+                className="mt-1 w-full rounded-md border border-workshop/20 dark:border-surface-light/20 bg-transparent px-3 py-2 text-lg tracking-[0.4em] font-mono focus:outline-hidden focus:ring-2 focus:ring-gold-bright"
               />
             </label>
             <button

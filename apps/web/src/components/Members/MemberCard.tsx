@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { formatRelative } from "../../lib/dates";
 import type { MemberDirectoryEntry } from "../../hooks/useMembers";
 

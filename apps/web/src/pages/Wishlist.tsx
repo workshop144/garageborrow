@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useMemo, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 
@@ -100,7 +101,7 @@ export default function Wishlist(): JSX.Element {
             >
               <div className="flex items-start justify-between gap-3">
                 <Link to={`/wishlist/${r.id}`} className="min-w-0 flex-1">
-                  <h2 className="font-heading text-xl break-words">{r.item_name}</h2>
+                  <h2 className="font-heading text-xl wrap-break-word">{r.item_name}</h2>
                   {r.description ? (
                     <p className="mt-1 text-sm opacity-80 line-clamp-2">
                       {r.description.slice(0, 120)}

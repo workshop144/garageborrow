@@ -22,7 +22,7 @@ The primary user is "one person with a generous garage and several dozen friends
 
 ## Quick start
 
-Prerequisites: Node 20 (`.nvmrc`), pnpm 9, AWS CLI + SAM CLI configured for `us-east-2`.
+Prerequisites: Node 24 (`.nvmrc`), pnpm 9, AWS CLI + SAM CLI configured for `us-east-2`.
 
 ```bash
 pnpm install

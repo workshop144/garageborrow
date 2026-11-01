@@ -4,6 +4,17 @@ import react from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
 import prettier from "eslint-config-prettier";
 import globals from "globals";
+import { createRequire } from "node:module";
+
+// eslint-plugin-react 7.37 (last release 2025-04) declares eslint <=9 but its
+// recommended rules only reach ESLint 10's removed context APIs through
+// fallbacks, except `version: "detect"`, which calls context.getFilename().
+// So resolve the installed React version ourselves; package.json's
+// pnpm.peerDependencyRules allows the eslint 10 peer. Revisit when the plugin
+// ships ESLint 10 support (or move to @eslint-react/eslint-plugin).
+const reactVersion = createRequire(new URL("./apps/web/package.json", import.meta.url))(
+  "react/package.json",
+).version;
 
 export default [
   {
@@ -33,7 +44,7 @@ export default [
       },
     },
     settings: {
-      react: { version: "detect" },
+      react: { version: reactVersion },
     },
     rules: {
       ...react.configs.recommended.rules,

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import type { JSX } from "react";
+import { useState } from "react";
 import type { TierName } from "@garageborrow/shared";
 
 import { Drawer } from "../../Drawers/Drawer";
@@ -70,7 +71,7 @@ function TagsInput({
         }}
         onBlur={commit}
         placeholder="Add tag…"
-        className="flex-1 min-w-[6rem] bg-transparent text-sm outline-none"
+        className="flex-1 min-w-24 bg-transparent text-sm outline-hidden"
       />
     </div>
   );
@@ -81,26 +82,35 @@ export function ItemEditDrawer({ open, onClose, item, knownCategories }: Props):
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    setDraft(
-      item
-        ? {
-            name: item.name,
-            description: item.description,
-            category: item.category,
-            primary_photo_key: item.primary_photo_key,
-            handling_notes: item.handling_notes ?? "",
-            default_duration_days: item.default_duration_days,
-            requires_approval: item.requires_approval,
-            min_tier: item.min_tier,
-            auto_approve_tier: item.auto_approve_tier,
-            approx_value: item.approx_value,
-            tags: item.tags,
-          }
-        : { default_duration_days: 3, min_tier: "howdy", auto_approve_tier: "family", tags: [] },
-    );
-  }, [open, item]);
+  // Re-seed the draft each time the drawer opens or is pointed at another
+  // item. Done during render (React's "adjust state when a prop changes"
+  // pattern) rather than in an effect, so there is no stale first paint.
+  const [seededFor, setSeededFor] = useState<{ open: boolean; item: Props["item"] }>({
+    open: false,
+    item: null,
+  });
+  if (seededFor.open !== open || seededFor.item !== item) {
+    setSeededFor({ open, item });
+    if (open) {
+      setDraft(
+        item
+          ? {
+              name: item.name,
+              description: item.description,
+              category: item.category,
+              primary_photo_key: item.primary_photo_key,
+              handling_notes: item.handling_notes ?? "",
+              default_duration_days: item.default_duration_days,
+              requires_approval: item.requires_approval,
+              min_tier: item.min_tier,
+              auto_approve_tier: item.auto_approve_tier,
+              approx_value: item.approx_value,
+              tags: item.tags,
+            }
+          : { default_duration_days: 3, min_tier: "howdy", auto_approve_tier: "family", tags: [] },
+      );
+    }
+  }
 
   const updateMut = useUpdateAdminItem();
   const createMut = useCreateAdminItem();

@@ -1,10 +1,76 @@
-@import "@fontsource/permanent-marker/400.css";
-@import "@fontsource-variable/inter";
-@import "@fontsource-variable/jetbrains-mono";
+/* Font faces are imported from main.tsx: @tailwindcss/postcss inlines CSS
+   @imports without rebasing their relative font URLs. */
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@source "../../../packages/ui/src/**/*.{ts,tsx}";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-gold-primary: #b5a66b;
+  --color-gold-accent: #daaf35;
+  --color-gold-bright: #e8b833;
+
+  --color-workshop: #1a1a1a;
+  --color-workshop-dark: #0f0f0f;
+
+  --color-surface-light: #faf7f0;
+  --color-surface-dark: #2a2018;
+
+  --color-status-available: #4a7c59;
+  --color-status-out: #c97d3f;
+  --color-status-overdue: #b85042;
+
+  --color-tier-howdy: #e5d5a0;
+  --color-tier-friend: #b5a66b;
+  --color-tier-family: #daaf35;
+
+  --font-heading: "Permanent Marker", cursive;
+  --font-body: "Inter Variable", Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", monospace;
+
+  --background-image-wood-grain-light: url("/src/assets/wood-grain.svg");
+  --background-image-wood-grain-dark: url("/src/assets/wood-grain-dark.svg");
+  --background-image-pegboard-dots: url("/src/assets/pegboard-dots.svg");
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  /* v4 gives buttons the browser's default cursor; keep v3's pointer. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@utility bg-wood {
+  background-image: url("/src/assets/wood-grain.svg");
+  background-repeat: repeat;
+  .dark & {
+    background-image: url("/src/assets/wood-grain-dark.svg");
+  }
+}
+
+@utility bg-pegboard {
+  background-image: url("/src/assets/pegboard-dots.svg");
+  background-repeat: repeat;
+}
 
 @layer base {
   html {
@@ -18,19 +84,5 @@
   h2,
   h3 {
     @apply font-heading;
-  }
-}
-
-@layer utilities {
-  .bg-wood {
-    background-image: url("/src/assets/wood-grain.svg");
-    background-repeat: repeat;
-  }
-  .dark .bg-wood {
-    background-image: url("/src/assets/wood-grain-dark.svg");
-  }
-  .bg-pegboard {
-    background-image: url("/src/assets/pegboard-dots.svg");
-    background-repeat: repeat;
   }
 }

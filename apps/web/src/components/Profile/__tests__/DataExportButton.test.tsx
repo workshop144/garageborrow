@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -35,7 +36,10 @@ function withQuery(children: ReactNode): JSX.Element {
 describe("DataExportButton", () => {
   it("downloads once, shows confirmation, and disables further presses", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ user: { phone: "+15550000000" } }));
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }));
+    vi.stubGlobal(
+      "URL",
+      Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }),
+    );
     const user = userEvent.setup();
     render(withQuery(<DataExportButton />));
 

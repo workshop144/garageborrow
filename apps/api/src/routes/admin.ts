@@ -206,7 +206,8 @@ const SettingsPatchSchema = z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .optional(),
-    tier_labels: TierLabelsSchema.optional(),
+    // unwrap(): Zod 4 would otherwise apply the default when the key is omitted.
+    tier_labels: TierLabelsSchema.unwrap().optional(),
     quality_tiers: z.array(z.string().min(1)).optional(),
     payforward_orgs: z.array(NonprofitOrgSchema).optional(),
     payforward_intro_copy: z.string().optional(),
