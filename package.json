@@ -10,7 +10,7 @@
     "url": "https://github.com/broots144/garageborrow.git"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.12.0",
     "pnpm": ">=9.0.0"
   },
   "packageManager": "pnpm@9.12.0",

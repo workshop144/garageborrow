@@ -4,7 +4,7 @@ Thanks for your interest. Garage Borrow is intentionally small and approachable 
 
 ## Local setup
 
-Prerequisites: Node 20 (use `nvm use` against `.nvmrc`), pnpm 9.
+Prerequisites: Node 24 (use `nvm use` against `.nvmrc`), pnpm 9.
 
 ```bash
 pnpm install

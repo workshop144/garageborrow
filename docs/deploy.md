@@ -6,7 +6,7 @@ You should already have:
 
 - An AWS account with the AWS CLI + SAM CLI configured
 - A domain name (or willingness to register one — Step 1)
-- Node 20 + pnpm 9 (`nvm use` against the repo's `.nvmrc`)
+- Node 24 + pnpm 9 (`nvm use` against the repo's `.nvmrc`)
 
 The whole flow takes about an hour the first time. Subsequent deploys go through GitHub Actions on `push` to `main`.
 
