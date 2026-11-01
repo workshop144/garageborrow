@@ -57,26 +57,26 @@ importers:
   apps/api:
     dependencies:
       '@aws-sdk/client-cognito-identity-provider':
-        specifier: ^3.1159.0
-        version: 3.1159.0
+        specifier: ^3.1160.0
+        version: 3.1160.0
       '@aws-sdk/client-dynamodb':
-        specifier: ^3.1159.0
-        version: 3.1159.0
+        specifier: ^3.1160.0
+        version: 3.1160.0
       '@aws-sdk/client-lambda':
-        specifier: ^3.1159.0
-        version: 3.1159.0
+        specifier: ^3.1160.0
+        version: 3.1160.0
       '@aws-sdk/client-s3':
-        specifier: ^3.1159.0
-        version: 3.1159.0
+        specifier: ^3.1160.0
+        version: 3.1160.0
       '@aws-sdk/client-sns':
-        specifier: ^3.1159.0
-        version: 3.1159.0
+        specifier: ^3.1160.0
+        version: 3.1160.0
       '@aws-sdk/lib-dynamodb':
-        specifier: ^3.1159.0
-        version: 3.1159.0(@aws-sdk/client-dynamodb@3.1159.0)
+        specifier: ^3.1160.0
+        version: 3.1160.0(@aws-sdk/client-dynamodb@3.1160.0)
       '@aws-sdk/s3-request-presigner':
-        specifier: ^3.1159.0
-        version: 3.1159.0
+        specifier: ^3.1160.0
+        version: 3.1160.0
       '@garageborrow/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -163,8 +163,8 @@ importers:
         specifier: ^3.2.0
         version: 3.2.0(date-fns@4.4.0)
       framer-motion:
-        specifier: ^14.7.1
-        version: 14.7.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        specifier: ^14.8.0
+        version: 14.8.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       libphonenumber-js:
         specifier: ^1.13.15
         version: 1.13.15
@@ -328,24 +328,24 @@ packages:
     resolution: {integrity: sha512-CXNESwkQC9jdrUG6cKXBfudVt1frGcYQykcCYbNclVrsewuGMbo3PlFjRteMe4OftNAqhyc3xC2jTz7SUqLasQ==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-cognito-identity-provider@3.1159.0':
-    resolution: {integrity: sha512-7REListLJT7sOXCoSbuimz58eH/jzauz83/0WN5GAxMK9I3CZe7XohX6vVPAeQZrABCW43aShjVJxJbzJMs9ig==}
+  '@aws-sdk/client-cognito-identity-provider@3.1160.0':
+    resolution: {integrity: sha512-iUemXHd50oingjiXjXP2ts87p2I2OWIbagdGem9WiFMTOcRO/dh1aEa9qr+zdnz+Y3TySe2MYb5woG3h8QiYIQ==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-dynamodb@3.1159.0':
-    resolution: {integrity: sha512-vdIwN77VEj/ojm6l1AJ7PFv7rCK+DLmYBjFh2RCcta7dQ5uwhPZNkVX05xzRLLRV3G0AvDpyS9152NtwzKm46A==}
+  '@aws-sdk/client-dynamodb@3.1160.0':
+    resolution: {integrity: sha512-DXTNy4ZcOwSwIviqOmJj6T4GgoyiqAsL2TT1obBE1EQGrjKcqH8K4+Trc4TKEjQ9+BcSNfMn+tXIpCS27uu7Sg==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-lambda@3.1159.0':
-    resolution: {integrity: sha512-7ziSrw06ny0rfmVfN5skYgM/vniuk3cF0wZvwFaGXxALq/pIRVwcBRM1VO5nDKqLm33qK+Q5zjBkTLlqOW3IzA==}
+  '@aws-sdk/client-lambda@3.1160.0':
+    resolution: {integrity: sha512-Rf4x2t/OrwNIVdNqAlg+LUhJ0Akgs/VWRhR+AN/c3gzabbBhCxnYrWlcW3bInj21v6g1c89gLtclim2bkRFemg==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-s3@3.1159.0':
-    resolution: {integrity: sha512-el/Ihylk4PjJh/uJvYUeAzBiVLR6zt0xBOPIbciybePABWD/cOcxinHEPQslogm61LI2etnRrixSQltX94gzLA==}
+  '@aws-sdk/client-s3@3.1160.0':
+    resolution: {integrity: sha512-547MvuVvH0s2mcrQ0G+F3Q6STJp54JyI9IS40Hx2JYljkjJpoijT2TG0M8XsgFyuqbQAKWHESYXD/7hmdUNAvQ==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-sns@3.1159.0':
-    resolution: {integrity: sha512-jLD8Zb62SMVMUfHOhPbo92/XOR9PaPoL/Q9VQVJ4kjDc+zeoKZZT/0In4p37q8QSgBvqPFPGlYQKxkH/1DxGqA==}
+  '@aws-sdk/client-sns@3.1160.0':
+    resolution: {integrity: sha512-E4quPayAmBJQ74HTVhJ2sblAxfHbMKE/rVxUF5u+pyKia6o3KoarHwIOXF9bZzf5uB3HX1PqOegnW49vB9Lvlg==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.979.1':
@@ -392,11 +392,11 @@ packages:
     resolution: {integrity: sha512-8q1ICxcDjHId3bBryuu/j+1L9y5/3uQnwzLDt5j2ElcjZSoWmFtymdJy7OjLrluSMe0Z4mq5bcH4fxBXvlEHfw==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/lib-dynamodb@3.1159.0':
-    resolution: {integrity: sha512-SbRkYhI3kyy5zIIymGeDwUYNGrHlnK/p5R9e2So/IRB7FYHDWq0LywrJ30Hb5xWoHImF8PRcNHual8dnZ0T1KA==}
+  '@aws-sdk/lib-dynamodb@3.1160.0':
+    resolution: {integrity: sha512-Uicf3uLQkGpHvr9KbLyCsTTUMM7TSVf5ZmoWRrxvXqBP5x6kxHMca56Np+nRW0lf2fEV1fA7OjtYlKf9WR3eYg==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
-      '@aws-sdk/client-dynamodb': ^3.1159.0
+      '@aws-sdk/client-dynamodb': ^3.1160.0
 
   '@aws-sdk/middleware-endpoint-discovery@3.972.37':
     resolution: {integrity: sha512-+KAK020JY95Q7Swwo5b9pl9S11VPuNLqecCW5bzkksWiU5pmI85lAloOD4qlIKIA/P8FlrRJ60XJ6+lnDQK/DQ==}
@@ -410,8 +410,8 @@ packages:
     resolution: {integrity: sha512-/OczlavsS7U5sOodRO10Ug4R/AKFVZiXTstKipWe68EfjPkmdDFNXNl9FCJyXWkg1DG6RBm3qAuVB8FNW9O8KQ==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/s3-request-presigner@3.1159.0':
-    resolution: {integrity: sha512-61ydUdPny2+kJ7Jv7LRVSmJ7/HI3lyNcQFr923l7Ib4fkDLOYCvmw203BL6i2+oihxblXf3kmxdAYTjrsLUwrA==}
+  '@aws-sdk/s3-request-presigner@3.1160.0':
+    resolution: {integrity: sha512-RBp9dEUMaznUMqbHFCBEzGDk+tAAoGD8WdPrRZnITshs/fsieajD1fmodmUxKq3BFOeIOrG9UUJpcgW+GNNcWg==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/signature-v4-multi-region@3.996.51':
@@ -2756,15 +2756,18 @@ packages:
     resolution: {integrity: sha512-gIXjKqtFuWEgzFRJA9WCQeSJLZDjgJUOMCMzxtvFq/37KojM1BFGufqsCy0r4qSQmYLsZYMeyRqzIWOMup03sw==}
     engines: {node: '>=14'}
 
-  framer-motion@14.7.1:
-    resolution: {integrity: sha512-mFDYZxyfeZnpvL/zEQEqLZNYVA/ya47c9TBfZb/PEoNBBVSVvCLkMrCv9U38cuw72W161XENZwZB0+4nIBLEJg==}
+  framer-motion@14.8.0:
+    resolution: {integrity: sha512-PQsSx+UlaKiyPhADjVT5wALBErJJdbMeKQS4gQx6ibOrSNni7qjqfTKMvf6YHGG8pQWi6njs7AqrIG7R2hbnxA==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
+      remix: ^3.1.0
     peerDependenciesMeta:
       react:
         optional: true
       react-dom:
+        optional: true
+      remix:
         optional: true
 
   fs-extra@9.1.0:
@@ -3482,8 +3485,8 @@ packages:
   mnemonist@0.38.3:
     resolution: {integrity: sha512-2K9QYubXx/NAjv4VLq1d1Ly8pWNC5L3BrixtdkyTegXWJIqY+zLNDhhX/A+ZwWt70tB1S8H4BE8FLYEFyNoOBw==}
 
-  motion-dom@14.7.1:
-    resolution: {integrity: sha512-p9q9F7+HoijbQjUG/cSGNmWS2t1OaAKxkd2RG5gQJRoDwoTap/Khb7K1P5rLW90crnSmx0rcRXzh3Jd5UNrpEw==}
+  motion-dom@14.8.0:
+    resolution: {integrity: sha512-HzA41kvV7BgluM7L/XbW+gHFzDtJUbHnEsrlnIzPS9dqSfoPy9YzL6VKF7ai0TiQcykkkLUqvIxECAdwa9gwAw==}
 
   motion-utils@14.7.0:
     resolution: {integrity: sha512-woO0/Nb7ys75f94fjvQi/6leiHGvZUYkeHUPEZ3vxsV+9OpEVhkxp01x8MlRwX0zt31EqgXsKDAoBoJLC148Tw==}
@@ -4473,7 +4476,7 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.9.1
 
-  '@aws-sdk/client-cognito-identity-provider@3.1159.0':
+  '@aws-sdk/client-cognito-identity-provider@3.1160.0':
     dependencies:
       '@aws-sdk/core': 3.979.1
       '@aws-sdk/credential-provider-node': 3.972.92
@@ -4484,7 +4487,7 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.9.1
 
-  '@aws-sdk/client-dynamodb@3.1159.0':
+  '@aws-sdk/client-dynamodb@3.1160.0':
     dependencies:
       '@aws-sdk/core': 3.979.1
       '@aws-sdk/credential-provider-node': 3.972.92
@@ -4497,7 +4500,7 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.9.1
 
-  '@aws-sdk/client-lambda@3.1159.0':
+  '@aws-sdk/client-lambda@3.1160.0':
     dependencies:
       '@aws-sdk/core': 3.979.1
       '@aws-sdk/credential-provider-node': 3.972.92
@@ -4508,7 +4511,7 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.9.1
 
-  '@aws-sdk/client-s3@3.1159.0':
+  '@aws-sdk/client-s3@3.1160.0':
     dependencies:
       '@aws-sdk/checksums': 3.1002.1
       '@aws-sdk/core': 3.979.1
@@ -4522,7 +4525,7 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.9.1
 
-  '@aws-sdk/client-sns@3.1159.0':
+  '@aws-sdk/client-sns@3.1160.0':
     dependencies:
       '@aws-sdk/core': 3.979.1
       '@aws-sdk/credential-provider-node': 3.972.92
@@ -4640,11 +4643,11 @@ snapshots:
       mnemonist: 0.38.3
       tslib: 2.9.1
 
-  '@aws-sdk/lib-dynamodb@3.1159.0(@aws-sdk/client-dynamodb@3.1159.0)':
+  '@aws-sdk/lib-dynamodb@3.1160.0(@aws-sdk/client-dynamodb@3.1160.0)':
     dependencies:
-      '@aws-sdk/client-dynamodb': 3.1159.0
+      '@aws-sdk/client-dynamodb': 3.1160.0
       '@aws-sdk/core': 3.979.1
-      '@aws-sdk/util-dynamodb': 3.996.9(@aws-sdk/client-dynamodb@3.1159.0)
+      '@aws-sdk/util-dynamodb': 3.996.9(@aws-sdk/client-dynamodb@3.1160.0)
       '@smithy/core': 3.38.1
       '@smithy/types': 4.19.0
       tslib: 2.9.1
@@ -4677,7 +4680,7 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.9.1
 
-  '@aws-sdk/s3-request-presigner@3.1159.0':
+  '@aws-sdk/s3-request-presigner@3.1160.0':
     dependencies:
       '@aws-sdk/core': 3.979.1
       '@aws-sdk/signature-v4-multi-region': 3.996.51
@@ -4707,9 +4710,9 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.9.1
 
-  '@aws-sdk/util-dynamodb@3.996.9(@aws-sdk/client-dynamodb@3.1159.0)':
+  '@aws-sdk/util-dynamodb@3.996.9(@aws-sdk/client-dynamodb@3.1160.0)':
     dependencies:
-      '@aws-sdk/client-dynamodb': 3.1159.0
+      '@aws-sdk/client-dynamodb': 3.1160.0
       tslib: 2.9.1
 
   '@aws-sdk/util-utf8-browser@3.259.0':
@@ -7085,9 +7088,9 @@ snapshots:
       cross-spawn: 7.0.6
       signal-exit: 4.1.0
 
-  framer-motion@14.7.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
+  framer-motion@14.8.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
-      motion-dom: 14.7.1
+      motion-dom: 14.8.0
       motion-utils: 14.7.0
       tslib: 2.9.1
     optionalDependencies:
@@ -7925,7 +7928,7 @@ snapshots:
     dependencies:
       obliterator: 1.6.1
 
-  motion-dom@14.7.1:
+  motion-dom@14.8.0:
     dependencies:
       motion-utils: 14.7.0
 
