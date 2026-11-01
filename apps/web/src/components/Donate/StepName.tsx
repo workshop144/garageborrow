@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 type Props = {
   name: string;
   description: string;

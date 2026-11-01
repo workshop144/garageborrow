@@ -21,6 +21,11 @@ export function initSentry(): void {
     environment: process.env.STAGE ?? "dev",
     ...(release ? { release } : {}),
     tracesSampleRate: 0,
+    // Sentry 11 hooks module loading to inject diagnostics-channel tracing,
+    // which needs @sentry/server-runtime-injection on disk next to the code.
+    // esbuild bundles us into one file and we record no spans, so skip it
+    // (otherwise every cold start logs a "failed to register" warning).
+    enableRuntimeChannelInjection: false,
   });
   initialized = true;
 }

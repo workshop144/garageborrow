@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import type { ReactNode } from "react";
 import type { Notification } from "@garageborrow/shared";
 

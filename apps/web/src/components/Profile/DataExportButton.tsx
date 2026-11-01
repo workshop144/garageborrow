@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useDataExport } from "../../hooks/useDataExport";
 
 export function DataExportButton(): JSX.Element {

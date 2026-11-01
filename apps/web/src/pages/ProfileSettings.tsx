@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import type { JSX } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { NotificationPrefs as NotificationPrefsValue } from "@garageborrow/shared";
 
@@ -28,13 +29,17 @@ export default function ProfileSettings(): JSX.Element {
   const [visibility, setVisibility] = useState<"visible" | "hidden">("visible");
   const [prefs, setPrefs] = useState<NotificationPrefsValue | null>(null);
 
-  useEffect(() => {
-    const u = profile.data?.user;
-    if (!u) return;
-    setDisplayName(u.display_name);
-    setVisibility(u.visibility);
-    setPrefs(u.notification_prefs);
-  }, [profile.data?.user]);
+  // Load the form from each fresh copy of the profile.
+  const user = profile.data?.user;
+  const [loadedUser, setLoadedUser] = useState<typeof user>(undefined);
+  if (user !== loadedUser) {
+    setLoadedUser(user);
+    if (user) {
+      setDisplayName(user.display_name);
+      setVisibility(user.visibility);
+      setPrefs(user.notification_prefs);
+    }
+  }
 
   function saveDisplayName(): void {
     if (!displayName.trim() || !profile.data?.user) return;

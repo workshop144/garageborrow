@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useMemo, useState } from "react";
 
 import { AdminLayout } from "../../components/Admin/AdminLayout";
@@ -52,7 +53,7 @@ export default function Inventory(): JSX.Element {
           placeholder="Search…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          className="flex-1 min-w-[10rem] rounded-xl border border-workshop/15 dark:border-surface-light/15 bg-transparent px-3 py-2 text-sm"
+          className="flex-1 min-w-40 rounded-xl border border-workshop/15 dark:border-surface-light/15 bg-transparent px-3 py-2 text-sm"
           data-testid="inventory-search"
         />
         <select

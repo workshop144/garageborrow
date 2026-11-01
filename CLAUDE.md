@@ -39,7 +39,7 @@ When a prompt asks you to commit, push, and open a PR:
 ### Required URL field handling
 
 Any new schema field that holds a URL must use the `HttpUrl` helper from
-`packages/shared/src/schemas/common.ts`, not `z.string().url()` directly.
-Zod 3.x's `.url()` accepts `javascript:`, `data:`, and `vbscript:` schemes
+`packages/shared/src/schemas/common.ts`, not `z.url()` directly.
+Zod's URL validator accepts `javascript:`, `data:`, and `vbscript:` schemes
 which is a stored XSS vector. Render user-supplied URLs through
 `safeHref()` from `apps/web/src/lib/safeHref.ts`.

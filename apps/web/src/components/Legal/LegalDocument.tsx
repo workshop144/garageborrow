@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import { AppShell } from "../AppShell";
 
@@ -45,7 +46,7 @@ export function LegalDocument({ source }: Props): JSX.Element {
   const { title, lastUpdated, body } = splitFrontmatter(source);
   return (
     <AppShell>
-      <div className="bg-wood -mx-4 px-4 py-6 sm:-mx-0 sm:rounded-2xl sm:px-6">
+      <div className="bg-wood -mx-4 px-4 py-6 sm:mx-0 sm:rounded-2xl sm:px-6">
         <article className="mx-auto max-w-2xl rounded-2xl bg-surface-light/95 dark:bg-surface-dark/95 p-6 shadow-md ring-1 ring-workshop/10 dark:ring-surface-light/10">
           {title ? <h1 className="font-heading text-3xl text-gold-bright">{title}</h1> : null}
           {lastUpdated ? (

@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import type { MyStuffResponse } from "../../hooks/useMyStuff";
 
 type Props = {

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import type { JSX } from "react";
+import { useState } from "react";
 import type { Garage, NonprofitOrg, TierLabels, TierName } from "@garageborrow/shared";
 
 import {
@@ -48,9 +49,13 @@ export function SettingsForm(): JSX.Element {
   const update = useUpdateGarageSettings();
   const [draft, setDraft] = useState<Draft | null>(null);
 
-  useEffect(() => {
+  // Reload the draft whenever fresh garage data arrives (first load, or the
+  // refetch after a save).
+  const [loadedFrom, setLoadedFrom] = useState<typeof garage.data>(undefined);
+  if (garage.data !== loadedFrom) {
+    setLoadedFrom(garage.data);
     if (garage.data?.garage) setDraft(fromGarage(garage.data.garage));
-  }, [garage.data]);
+  }
 
   if (garage.isLoading || !draft) return <p className="opacity-70">Loading…</p>;
   if (garage.isError) return <p className="text-status-overdue">Couldn&apos;t load settings.</p>;

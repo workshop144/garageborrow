@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import termsMd from "../content/terms.md?raw";
 import { LegalDocument } from "../components/Legal/LegalDocument";
 import { fillTenant } from "../lib/tenant";

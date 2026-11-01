@@ -13,15 +13,14 @@ import {
   UserSchema,
   WaitlistEntrySchema,
 } from "@garageborrow/shared";
-import type { ZodSchema } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { z } from "zod";
 
 import { env } from "../lib/env.js";
 import type { AppEnv } from "../lib/types.js";
 
 export const openapiRoutes = new Hono<AppEnv>();
 
-const SCHEMAS: Record<string, ZodSchema<unknown>> = {
+const SCHEMAS: Record<string, z.ZodType> = {
   User: UserSchema,
   Garage: GarageSchema,
   GarageMembership: GarageMembershipSchema,
@@ -157,7 +156,7 @@ interface OpenApiDoc {
   info: { title: string; version: string; description: string };
   servers: Array<{ url: string; description: string }>;
   components: {
-    schemas: Record<string, ReturnType<typeof zodToJsonSchema>>;
+    schemas: Record<string, z.core.JSONSchema.BaseSchema>;
     securitySchemes: Record<string, unknown>;
   };
   security: Array<Record<string, string[]>>;
@@ -165,9 +164,13 @@ interface OpenApiDoc {
 }
 
 function buildSpec(): OpenApiDoc {
-  const components: Record<string, ReturnType<typeof zodToJsonSchema>> = {};
+  const components: Record<string, z.core.JSONSchema.BaseSchema> = {};
   for (const [name, schema] of Object.entries(SCHEMAS)) {
-    components[name] = zodToJsonSchema(schema, { name, target: "openApi3" });
+    // Zod 4 emits JSON Schema natively; draft 2020-12 is the dialect OpenAPI 3.1 uses.
+    components[name] = z.toJSONSchema(schema, {
+      target: "draft-2020-12",
+      unrepresentable: "any",
+    });
   }
   return {
     openapi: "3.1.0",

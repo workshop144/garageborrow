@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { addDays, formatISO, nextSaturday } from "date-fns";
 import type { Instance, ItemDetail } from "@garageborrow/shared";
@@ -136,20 +137,26 @@ export function BorrowDrawer({
   const borrow = useBorrow();
   const borrowReset = borrow.reset;
 
-  // Reset state whenever the drawer opens for a new item.
-  useEffect(() => {
-    if (open) {
+  // Reset the form whenever the drawer opens for a new item (adjusted during
+  // render, React's pattern for state that follows a prop).
+  const resetKey = open ? `${initialStep}|${defaultChip.id}` : null;
+  const [lastResetKey, setLastResetKey] = useState<string | null>(resetKey);
+  if (resetKey !== lastResetKey) {
+    setLastResetKey(resetKey);
+    if (resetKey !== null) {
       setStep(initialStep);
       setInstanceId(onlyOne && availableInstances[0] ? availableInstances[0].id : null);
       setChipId(defaultChip.id);
       setCustomDate("");
       setNote("");
       setConflict(null);
-      borrowReset();
     }
-    // borrowReset is stable across renders for a given mutation; dep on it is fine.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialStep, onlyOne, defaultChip.id]);
+  }
+
+  // The mutation's state lives in React Query, so clearing it stays an effect.
+  useEffect(() => {
+    if (open) borrowReset();
+  }, [open, borrowReset]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const now = useMemo(() => new Date(), [open]);

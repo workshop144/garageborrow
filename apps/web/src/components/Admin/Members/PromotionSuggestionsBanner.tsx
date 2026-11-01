@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import type { TierName } from "@garageborrow/shared";
 
 import { usePromotionSuggestions, useUpdateMember } from "../../../hooks/useAdminMembers";

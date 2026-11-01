@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect } from "react";
 import type { ReactNode } from "react";

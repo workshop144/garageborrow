@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AppShell } from "../components/AppShell";

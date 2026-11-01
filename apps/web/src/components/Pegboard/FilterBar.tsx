@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useId } from "react";
 
 export type SortKey = "recent" | "popular" | "az";
@@ -37,7 +38,7 @@ export function FilterBar({ filters, onChange, categories }: Props): JSX.Element
           value={filters.query}
           onChange={(e) => onChange({ ...filters, query: e.target.value })}
           placeholder="Search tools…"
-          className="flex-1 min-w-[10rem] rounded-md border border-workshop/20 dark:border-surface-light/20 bg-surface-light/95 dark:bg-workshop/60 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gold-bright"
+          className="flex-1 min-w-40 rounded-md border border-workshop/20 dark:border-surface-light/20 bg-surface-light/95 dark:bg-workshop/60 px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-gold-bright"
         />
         <label className="inline-flex items-center gap-2 text-sm">
           <input
@@ -55,7 +56,7 @@ export function FilterBar({ filters, onChange, categories }: Props): JSX.Element
           id={sortId}
           value={filters.sort}
           onChange={(e) => onChange({ ...filters, sort: e.target.value as SortKey })}
-          className="rounded-md border border-workshop/20 dark:border-surface-light/20 bg-surface-light/95 dark:bg-workshop/60 px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gold-bright"
+          className="rounded-md border border-workshop/20 dark:border-surface-light/20 bg-surface-light/95 dark:bg-workshop/60 px-2 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-gold-bright"
         >
           {SORT_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>

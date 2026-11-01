@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useState } from "react";
 import type { AuditLogEntry as AuditLogEntryRecord } from "@garageborrow/shared";
 

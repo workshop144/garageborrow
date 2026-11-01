@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useMemo, useState } from "react";
 
 import { AdminLayout } from "../../components/Admin/AdminLayout";
@@ -14,6 +15,9 @@ export default function AdminWishlist(): JSX.Element {
   const [filter, setFilter] = useState<WishlistFilter>("open");
   const [sort, setSort] = useState<Sort>("votes");
   const [drawerId, setDrawerId] = useState<string | null>(null);
+  // Read the clock once per mount: render must stay pure, and a month window
+  // does not need to slide while the page is open.
+  const [mountedAt] = useState(() => Date.now());
 
   const list = useWishlist(undefined, filter);
 
@@ -39,13 +43,13 @@ export default function AdminWishlist(): JSX.Element {
   const stats = useMemo(() => {
     const all = (list.data?.pages ?? []).flatMap((p) => p.items);
     const open = all.filter((r) => r.status === "open").length;
-    const monthAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
+    const monthAgo = new Date(mountedAt - 30 * 86400_000).toISOString();
     const acquiredThisMonth = all.filter(
       (r) => r.status === "acquired" && (r.decided_at ?? "") >= monthAgo,
     ).length;
     const top = [...all].sort((a, b) => b.vote_count - a.vote_count)[0];
     return { open, acquiredThisMonth, top };
-  }, [list.data]);
+  }, [list.data, mountedAt]);
 
   const drawerRow = drawerId ? (items.find((r) => r.id === drawerId) ?? null) : null;
 

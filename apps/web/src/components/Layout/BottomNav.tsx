@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { NavLink } from "react-router-dom";
 import { useMe } from "../../lib/hooks/useMe";
 import { useGarageProfile } from "../../hooks/useGarageProfile";
@@ -117,7 +118,7 @@ export function BottomNav(): JSX.Element {
   return (
     <nav
       aria-label="Primary"
-      className="sticky bottom-0 z-10 border-t border-workshop/10 dark:border-surface-light/10 bg-surface-light/95 dark:bg-surface-dark/95 backdrop-blur pb-[env(safe-area-inset-bottom)]"
+      className="sticky bottom-0 z-10 border-t border-workshop/10 dark:border-surface-light/10 bg-surface-light/95 dark:bg-surface-dark/95 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]"
     >
       <ul
         className="mx-auto max-w-3xl grid"

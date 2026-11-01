@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import type { JSX } from "react";
+import { useState } from "react";
 import type { GarageMembership, TierName } from "@garageborrow/shared";
 
 import { Drawer } from "../../Drawers/Drawer";
@@ -17,12 +18,13 @@ export function MemberEditDrawer({ open, onClose, member }: Props): JSX.Element 
   const [notes, setNotes] = useState("");
   const update = useUpdateMember();
 
-  useEffect(() => {
-    if (member) {
-      setTier(member.tier);
-      setNotes(member.notes ?? "");
-    }
-  }, [member]);
+  // Load the form from whichever member the drawer was opened for.
+  const [loadedMember, setLoadedMember] = useState<GarageMembership | null>(null);
+  if (member && member !== loadedMember) {
+    setLoadedMember(member);
+    setTier(member.tier);
+    setNotes(member.notes ?? "");
+  }
 
   async function save(): Promise<void> {
     if (!member) return;

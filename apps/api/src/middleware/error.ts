@@ -1,6 +1,6 @@
 import type { Context, ErrorHandler, MiddlewareHandler, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 
 import { ApiError, toEnvelope } from "../lib/errors.js";
 import { logger } from "../lib/logger.js";
@@ -33,7 +33,7 @@ function respondWithError(c: Context<AppEnv>, err: unknown): Response {
     return c.json(toEnvelope(err), err.status as ContentfulStatusCode);
   }
   if (err instanceof ZodError) {
-    const apiErr = new ApiError("bad_request", "Validation failed", err.flatten());
+    const apiErr = new ApiError("bad_request", "Validation failed", z.flattenError(err));
     return c.json(toEnvelope(apiErr), 400);
   }
   logger.error({ err }, "unhandled_error");

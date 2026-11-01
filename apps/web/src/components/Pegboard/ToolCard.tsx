@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import type { GarageItem } from "../../hooks/useGarageItems";
@@ -75,7 +76,7 @@ export function ToolCard({ item }: Props): JSX.Element {
             <StatusPill item={item} />
           </div>
           {item.donated_by_display ? (
-            <div className="mt-1.5 inline-flex items-center rounded-sm bg-tier-howdy/40 dark:bg-tier-howdy/20 px-1.5 py-0.5 text-[10px] text-workshop/80 dark:text-surface-light/80">
+            <div className="mt-1.5 inline-flex items-center rounded-xs bg-tier-howdy/40 dark:bg-tier-howdy/20 px-1.5 py-0.5 text-[10px] text-workshop/80 dark:text-surface-light/80">
               Donated by {item.donated_by_display}
             </div>
           ) : null}

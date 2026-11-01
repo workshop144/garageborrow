@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { motion } from "framer-motion";
 
 const PHOTO_BASE = import.meta.env.VITE_API_BASE_URL?.replace(/\/v1\/?$/, "") ?? "";
@@ -19,7 +20,7 @@ export function HeroImage({ itemId, photoKey, alt }: Props): JSX.Element {
     <motion.div
       layoutId={`tool-${itemId}`}
       transition={{ type: "spring", stiffness: 320, damping: 28 }}
-      className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl bg-workshop/5 dark:bg-surface-light/5 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.25)]"
+      className="relative aspect-4/3 w-full overflow-hidden rounded-2xl bg-workshop/5 dark:bg-surface-light/5 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.25)]"
     >
       {photoKey ? (
         <img

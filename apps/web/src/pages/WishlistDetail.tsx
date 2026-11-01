@@ -1,6 +1,8 @@
+import type { JSX } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { AppShell } from "../components/AppShell";
+import type { WishlistRow } from "../hooks/useWishlist";
 import { useWishlistRequest } from "../hooks/useWishlistRequest";
 import { useWishlistVote } from "../hooks/useWishlistVote";
 import { formatRelative } from "../lib/dates";
@@ -50,7 +52,7 @@ export default function WishlistDetail(): JSX.Element {
       </div>
 
       <header className="mb-4">
-        <h1 className="font-heading text-3xl break-words">{r.item_name}</h1>
+        <h1 className="font-heading text-3xl wrap-break-word">{r.item_name}</h1>
         <p className="mt-1 text-xs opacity-70">
           From {requesterName} · {formatRelative(r.created_at)}
           {r.desired_by ? ` · needed by ${r.desired_by}` : ""}
@@ -134,11 +136,7 @@ export default function WishlistDetail(): JSX.Element {
   );
 }
 
-function StatusBanner({
-  request,
-}: {
-  request: import("../hooks/useWishlist").WishlistRow;
-}): JSX.Element {
+function StatusBanner({ request }: { request: WishlistRow }): JSX.Element {
   if (request.status === "acquired") {
     return (
       <div

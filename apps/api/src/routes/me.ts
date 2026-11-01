@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { HttpUrl, NotificationPrefsSchema, UserVisibilitySchema } from "@garageborrow/shared";
+import {
+  HttpUrl,
+  NotificationPrefsSchema,
+  UserVisibilitySchema,
+  patchSchemaOf,
+} from "@garageborrow/shared";
 import type { GarageMembership, TierName, User } from "@garageborrow/shared";
 
 import { mustUser } from "../lib/ctx.js";
@@ -71,7 +76,7 @@ meRoutes.get("/v1/me", async (c) => {
 
   // Top-level tier: "owner" if they own any garage, otherwise the highest
   // membership tier across their garages, defaulting to "howdy".
-  let topTier: TierName | "owner" = "howdy";
+  let topTier: TierName | "owner";
   if (owned.length > 0) {
     topTier = "owner";
   } else {
@@ -162,7 +167,7 @@ const PatchMeSchema = z
   .object({
     display_name: z.string().min(1).optional(),
     visibility: UserVisibilitySchema.optional(),
-    notification_prefs: NotificationPrefsSchema.partial().optional(),
+    notification_prefs: patchSchemaOf(NotificationPrefsSchema).optional(),
   })
   .strict();
 

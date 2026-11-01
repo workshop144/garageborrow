@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { resolveItemAccess } from "@garageborrow/shared";
-import { ItemSchema, ItemSortSchema, ItemStatusSchema } from "@garageborrow/shared";
+import { ItemSchema, ItemSortSchema, ItemStatusSchema, patchSchemaOf } from "@garageborrow/shared";
 import type { Instance, Item, ItemCounts, ItemSort, ItemStatus, Loan } from "@garageborrow/shared";
 import { z } from "zod";
 
@@ -235,7 +235,7 @@ itemRoutes.post("/v1/g/:garage/items", ownerOnly(), async (c) => {
   return c.json({ item }, 201);
 });
 
-const ItemPatchSchema = ItemCreateSchema.partial();
+const ItemPatchSchema = patchSchemaOf(ItemCreateSchema);
 itemRoutes.patch("/v1/g/:garage/items/:id", ownerOnly(), async (c) => {
   const garage = mustGarage(c);
   const itemId = c.req.param("id");

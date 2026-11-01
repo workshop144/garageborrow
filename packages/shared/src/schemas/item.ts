@@ -53,12 +53,12 @@ export type ItemCounts = z.infer<typeof ItemCountsSchema>;
 
 export const ItemListEntrySchema = ItemSchema.extend({
   access: ItemAccessSchema,
-}).merge(ItemCountsSchema);
+}).extend(ItemCountsSchema.shape);
 export type ItemListEntry = z.infer<typeof ItemListEntrySchema>;
 
 export const ItemDetailSchema = ItemSchema.extend({
   access: ItemAccessSchema,
-}).merge(ItemCountsSchema);
+}).extend(ItemCountsSchema.shape);
 export type ItemDetail = z.infer<typeof ItemDetailSchema>;
 
 export const ItemSortSchema = z.enum(["recent", "popular", "alphabetical"]);

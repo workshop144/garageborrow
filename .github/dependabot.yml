@@ -25,6 +25,13 @@ updates:
       semver-major-days: 7
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # TypeScript 7 is the native (Go) compiler and ships no JS compiler API;
+      # typescript-eslint 8.x (peer typescript <6.1) parses through that API,
+      # so lint cannot run on TS 7. Stay on 6.x until typescript-eslint
+      # supports 7 (check its peerDependencies), then drop this entry.
+      - dependency-name: typescript
+        versions: [">=7"]
     groups:
       npm:
         update-types: [minor, patch]

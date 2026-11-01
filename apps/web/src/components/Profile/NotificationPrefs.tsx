@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import type { JSX } from "react";
+import { useState } from "react";
 import type { NotificationPrefs as NotificationPrefsValue } from "@garageborrow/shared";
 
 import {
@@ -25,9 +26,12 @@ export function NotificationPrefs({ value, onChange, saving }: Props): JSX.Eleme
   const [pushPromptShown, setPushPromptShown] = useState(false);
   const [permission, setPermission] = useState<PermissionState>(() => getPermissionState());
 
-  useEffect(() => {
+  // Re-read the browser's permission whenever the push toggle changes.
+  const [permissionReadFor, setPermissionReadFor] = useState(value.push_enabled);
+  if (permissionReadFor !== value.push_enabled) {
+    setPermissionReadFor(value.push_enabled);
     setPermission(getPermissionState());
-  }, [value.push_enabled]);
+  }
 
   function set<K extends keyof NotificationPrefsValue>(key: K, v: NotificationPrefsValue[K]): void {
     onChange({ ...value, [key]: v });

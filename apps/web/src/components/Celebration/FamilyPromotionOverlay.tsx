@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -38,12 +39,17 @@ export function FamilyPromotionOverlay({
 }: Props): JSX.Element | null {
   const [open, setOpen] = useState(false);
 
+  // Open when a celebration becomes due for a user who has not seen it yet.
+  const dueFor = shouldCelebrate && userKey ? userKey : null;
+  const [checkedFor, setCheckedFor] = useState<string | null>(null);
+  if (dueFor !== checkedFor) {
+    setCheckedFor(dueFor);
+    if (dueFor && !hasSeenCelebration(dueFor)) setOpen(true);
+  }
+
   useEffect(() => {
-    if (!shouldCelebrate || !userKey) return;
-    if (hasSeenCelebration(userKey)) return;
-    setOpen(true);
-    void launchConfetti();
-  }, [shouldCelebrate, userKey]);
+    if (open) void launchConfetti();
+  }, [open]);
 
   function dismiss(): void {
     markCelebrationSeen(userKey);

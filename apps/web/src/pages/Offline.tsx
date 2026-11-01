@@ -1,3 +1,4 @@
+import type { JSX } from "react";
 export default function Offline(): JSX.Element {
   return (
     <div className="min-h-screen flex items-center justify-center px-6 text-center">

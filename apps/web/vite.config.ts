@@ -77,6 +77,12 @@ export default defineConfig(({ mode }) => {
         },
       }),
     ],
+    // amazon-cognito-identity-js pulls in buffer@4, which reads Node's `global`.
+    // Vite 5's Rollup commonjs plugin rewrote that; Vite 8's Rolldown does not,
+    // so the bundle threw "global is not defined" on load.
+    define: {
+      global: "globalThis",
+    },
     server: {
       port: 5173,
     },
