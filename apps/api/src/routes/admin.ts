@@ -26,7 +26,12 @@ import { mustGarage } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
-import { paginate, parsePageParams } from "../lib/pagination.js";
+import {
+  paginate,
+  paginateByKey,
+  parseKeysetPageParams,
+  parsePageParams,
+} from "../lib/pagination.js";
 import { PhotoKey } from "../lib/photo-key.js";
 import {
   deleteInvite,
@@ -426,12 +431,13 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/remind", async (c) => {
 adminRoutes.get("/v1/g/:garage/admin/reservations", async (c) => {
   const garage = mustGarage(c);
   const status = ReservationStatusSchema.parse(c.req.query("status") ?? "pending");
-  const params = parsePageParams(c);
+  const params = parseKeysetPageParams(c);
   const all = await listReservationsByGarage(garage.id);
   const rows = all.filter((r) => r.status === status);
-  // Stable order (id breaks ties) so cursors page the same view across calls.
+  // Keyset cursor on (start_at, id): deciding rows from one page shrinks the
+  // pending queue, and an offset cursor would then skip that many requests.
   rows.sort((a, b) => a.start_at.localeCompare(b.start_at) || a.id.localeCompare(b.id));
-  const { page, next_cursor } = paginate(rows, params);
+  const { page, next_cursor } = paginateByKey(rows, params, (r) => [r.start_at, r.id]);
   return c.json(next_cursor ? { reservations: page, next_cursor } : { reservations: page });
 });
 
@@ -527,8 +533,9 @@ adminRoutes.post("/v1/g/:garage/admin/reservations/:id/cancel", async (c) => {
   const updated: Reservation = {
     ...res,
     status: "cancelled",
-    decided_at: nowIso(),
-    ...(owner ? { decided_by_phone: owner.phone } : {}),
+    // Separate from decided_at/decided_by_phone, which keep the approval.
+    cancelled_at: nowIso(),
+    ...(owner ? { cancelled_by_phone: owner.phone } : {}),
   };
   if (!(await putReservationIfStatus(updated, "approved"))) {
     throw new ApiError("conflict", "Reservation changed, reload and try again");

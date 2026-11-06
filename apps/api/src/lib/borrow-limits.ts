@@ -25,12 +25,20 @@ export const MAX_RESERVATION_LEAD_DAYS = 90;
 // on one item. Stops one member taking every unit of a multi-unit item.
 export const MAX_OPEN_RESERVATIONS_PER_ITEM = 2;
 
-// Counts one borrow request or reservation against the member's daily cap.
-export async function bumpBorrowRequestCount(phone: string, now = new Date()): Promise<void> {
+// Counts one borrow request or reservation against the member's daily cap in
+// this garage (keyed by garage and phone, so membership of another garage does
+// not share the budget). Call it only once the request has passed every check
+// and is about to be written: a refused request (bad window, item out, garage
+// closed) must not use up the member's budget.
+export async function bumpBorrowRequestCount(
+  garage_id: string,
+  phone: string,
+  now = new Date(),
+): Promise<void> {
   const ts = now.toISOString();
   const n = await bumpWindowCounter(
     "borrow-request",
-    phone,
+    `${garage_id}#${phone}`,
     ts.slice(0, 10),
     Math.floor(now.getTime() / 1000) + 2 * 86400,
   );
@@ -39,7 +47,7 @@ export async function bumpBorrowRequestCount(phone: string, now = new Date()): P
   }
 }
 
-// 400 unless the window is no longer than MAX_RESERVATION_DAYS and starts
+// 400 unless start is before end, the window is no longer than MAX_RESERVATION_DAYS and starts
 // within MAX_RESERVATION_LEAD_DAYS of now.
 export function assertReservationWindow(
   window: { start: number; end: number },
@@ -47,6 +55,9 @@ export function assertReservationWindow(
 ): void {
   if (!Number.isFinite(window.start) || !Number.isFinite(window.end)) {
     throw new ApiError("bad_request", "Invalid reservation dates");
+  }
+  if (!(window.start < window.end)) {
+    throw new ApiError("bad_request", "start must be before end");
   }
   if (window.end - window.start > MAX_RESERVATION_DAYS * DAY_MS) {
     throw new ApiError(
@@ -62,7 +73,9 @@ export function assertReservationWindow(
   }
 }
 
-// 409 when the member already has a pending request for this item, or (unless
+// 409 when the member already has a pending request for this item whose
+// window has not ended (a stale request the owner never decided does not block
+// them for ever), or (unless
 // `pendingOnly`, used by borrow requests) already holds
 // MAX_OPEN_RESERVATIONS_PER_ITEM open reservations on it.
 export async function assertNoOpenRequest(
@@ -75,7 +88,7 @@ export async function assertNoOpenRequest(
   const mine = (await listReservationsByGarage(garage_id)).filter(
     (r: Reservation) => r.item_id === item_id && r.borrower_phone === phone,
   );
-  if (mine.some((r) => r.status === "pending")) {
+  if (mine.some((r) => r.status === "pending" && Date.parse(r.end_at) > now)) {
     throw new ApiError("conflict", "You already have a pending request for this item");
   }
   if (opts.pendingOnly) return;

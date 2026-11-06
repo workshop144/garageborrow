@@ -26,7 +26,14 @@ import {
   seedUser,
 } from "./_fixtures.js";
 import { clearNotifierSpy, spyNotifier } from "./_notifier-spy.js";
-import { authHeader, installDdbMock, installFakeAuth, listAll, resetDdbStore } from "./_setup.js";
+import {
+  authHeader,
+  installDdbMock,
+  installFakeAuth,
+  listAll,
+  resetDdbStore,
+  seedItem,
+} from "./_setup.js";
 
 const DAY = 86_400_000;
 let sent: ReturnType<typeof spyNotifier>;
@@ -91,6 +98,30 @@ describe("daily borrow request cap", () => {
     const pings = sent.filter((e) => e.type === "borrow_request_pending");
     expect(pings).toHaveLength(MAX_BORROW_REQUESTS_PER_DAY);
   });
+
+  it("refused requests do not count against the cap", async () => {
+    // A reversed window and an item that is out are refused before counting.
+    seedItemRecord({ id: "gone", min_tier: "howdy", status: "all_loaned" });
+    for (let i = 0; i < MAX_BORROW_REQUESTS_PER_DAY + 5; i++) {
+      expect((await reserve(HOWDY_PHONE, "saw", 2, 1)).status).toBe(400);
+      expect((await reserve(HOWDY_PHONE, "gone", 1, 2)).status).toBe(409);
+      const borrow = await post("/loans", HOWDY_PHONE, {
+        item_id: "gone",
+        liability_acknowledged: true,
+      });
+      expect(borrow.status).toBe(409);
+    }
+    expect((await reserve(HOWDY_PHONE, "saw", 1, 2)).status).toBe(201);
+  });
+
+  it("the cap is per garage", async () => {
+    const { bumpBorrowRequestCount } = await import("../lib/borrow-limits.js");
+    for (let i = 0; i < MAX_BORROW_REQUESTS_PER_DAY; i++) {
+      await bumpBorrowRequestCount("other-garage", HOWDY_PHONE);
+    }
+    await expect(bumpBorrowRequestCount("other-garage", HOWDY_PHONE)).rejects.toThrow();
+    expect((await reserve(HOWDY_PHONE, "saw", 1, 2)).status).toBe(201);
+  });
 });
 
 describe("one pending request per item", () => {
@@ -104,6 +135,15 @@ describe("one pending request per item", () => {
     expect(sent.filter((e) => e.type === "borrow_request_pending")).toHaveLength(1);
     // A different item is fine.
     expect((await post("/loans", HOWDY_PHONE, { ...body, item_id: "drill" })).status).toBe(202);
+  });
+
+  it("a pending request whose window has ended no longer blocks", async () => {
+    const id = await idOf(await reserve(HOWDY_PHONE, "saw", 1, 2));
+    // The owner never decided it and its window has passed.
+    const row = listAll().find((r) => r["id"] === id);
+    expect(row).toBeTruthy();
+    seedItem({ ...row!, start_at: inDays(-3), end_at: inDays(-2) });
+    expect((await reserve(HOWDY_PHONE, "saw", 1, 2)).status).toBe(201);
   });
 
   it("a duplicate pending reservation request is a 409", async () => {
@@ -163,10 +203,9 @@ describe("owner cancels an approved reservation", () => {
     sent.length = 0;
     const res = await post(`/admin/reservations/${id}/cancel`, OWNER_PHONE);
     expect(res.status).toBe(200);
-    expect(await getReservation(GARAGE_ID, id)).toMatchObject({
-      status: "cancelled",
-      decided_by_phone: OWNER_PHONE,
-    });
+    const row = await getReservation(GARAGE_ID, id);
+    expect(row).toMatchObject({ status: "cancelled", cancelled_by_phone: OWNER_PHONE });
+    expect(row?.cancelled_at).toBeTruthy();
     expect(sent).toEqual([
       expect.objectContaining({
         type: "reservation_decided",
@@ -206,6 +245,33 @@ describe("GET /admin/reservations", () => {
     const b = (await second.json()) as { reservations: unknown[]; next_cursor?: string };
     expect(b.reservations).toHaveLength(1);
     expect(b.next_cursor).toBeUndefined();
+  });
+
+  it("does not skip pending requests when the owner decides rows from an earlier page", async () => {
+    seedItemRecord({ id: "ladder", min_tier: "howdy", auto_approve_tier: "family" });
+    const ids = [
+      await idOf(await reserve(HOWDY_PHONE, "saw", 1, 2)),
+      await idOf(await reserve(HOWDY_PHONE, "drill", 3, 4)),
+      await idOf(await reserve(HOWDY_PHONE, "ladder", 5, 6)),
+    ];
+    const first = (await (
+      await call("GET", "/admin/reservations?limit=1", OWNER_PHONE)
+    ).json()) as { reservations: { id: string }[]; next_cursor?: string };
+    expect(first.reservations.map((r) => r.id)).toEqual([ids[0]]);
+    // The owner declines the row just seen; the queue shrinks by one.
+    const decided = await post(`/admin/reservations/${ids[0]}/decide`, OWNER_PHONE, {
+      decision: "decline",
+    });
+    expect(decided.status).toBe(200);
+    const second = (await (
+      await call("GET", `/admin/reservations?limit=1&cursor=${first.next_cursor}`, OWNER_PHONE)
+    ).json()) as { reservations: { id: string }[] };
+    expect(second.reservations.map((r) => r.id)).toEqual([ids[1]]);
+  });
+
+  it("rejects a malformed cursor", async () => {
+    const res = await call("GET", "/admin/reservations?cursor=bm9wZQ", OWNER_PHONE);
+    expect(res.status).toBe(400);
   });
 
   it("rejects an unknown status filter", async () => {

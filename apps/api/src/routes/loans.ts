@@ -68,7 +68,6 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
   if (needsApproval) {
     // Each request pings the owner: one pending request per item, and a daily cap.
     await assertNoOpenRequest(garage.id, item.id, user.phone, { pendingOnly: true });
-    await bumpBorrowRequestCount(user.phone);
     const instanceId = await assertAvailable({
       item,
       instanceId: body.instance_id,
@@ -76,6 +75,8 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
       window,
       commits: false,
     });
+    // Counted only once the request passed the checks, just before the write.
+    await bumpBorrowRequestCount(garage.id, user.phone);
     const reservation = {
       id: newId(),
       garage_id: garage.id,

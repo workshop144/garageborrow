@@ -25,9 +25,8 @@ export interface PageParams {
   offset: number;
 }
 
-export function parsePageParams(c: Context<AppEnv>): PageParams {
+function parseLimit(c: Context<AppEnv>): number {
   const limitRaw = c.req.query("limit");
-  const cursorRaw = c.req.query("cursor");
   let limit = DEFAULT_PAGE_LIMIT;
   if (limitRaw !== undefined && limitRaw !== "") {
     const n = Number(limitRaw);
@@ -36,6 +35,12 @@ export function parsePageParams(c: Context<AppEnv>): PageParams {
     }
     limit = n;
   }
+  return limit;
+}
+
+export function parsePageParams(c: Context<AppEnv>): PageParams {
+  const limit = parseLimit(c);
+  const cursorRaw = c.req.query("cursor");
   let offset = 0;
   if (cursorRaw) {
     offset = decodeCursor(cursorRaw);
@@ -84,4 +89,54 @@ export function paginate<T>(items: T[], { limit, offset }: PageParams): PageResu
     return { page: slice, next_cursor: encodeCursor(offset + limit) };
   }
   return { page: slice };
+}
+
+// Keyset pagination for lists that shrink while being paged (a queue the
+// caller works through): the cursor holds the sort key of the last row
+// returned, and the next page starts strictly after it, so removing rows
+// already seen does not skip any. `key` must be the list's sort order and
+// unique per row (end it with the id).
+export interface KeysetPageParams {
+  limit: number;
+  after?: string[];
+}
+
+export function parseKeysetPageParams(c: Context<AppEnv>): KeysetPageParams {
+  const limit = parseLimit(c);
+  const cursorRaw = c.req.query("cursor");
+  if (!cursorRaw) return { limit };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursorRaw, "base64url").toString("utf8"));
+  } catch {
+    throw new ApiError("bad_request", "Invalid cursor");
+  }
+  const after = (parsed as { k?: unknown } | null)?.k;
+  if (!Array.isArray(after) || after.length === 0 || !after.every((x) => typeof x === "string")) {
+    throw new ApiError("bad_request", "Invalid cursor");
+  }
+  return { limit, after: after as string[] };
+}
+
+function compareKeys(a: string[], b: string[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const c = (a[i] ?? "").localeCompare(b[i] ?? "");
+    if (c !== 0) return c;
+  }
+  return 0;
+}
+
+export function paginateByKey<T>(
+  sorted: T[],
+  { limit, after }: KeysetPageParams,
+  key: (row: T) => string[],
+): PageResult<T> {
+  const rest = after ? sorted.filter((r) => compareKeys(key(r), after) > 0) : sorted;
+  const page = rest.slice(0, limit);
+  const last = page[page.length - 1];
+  if (rest.length > limit && last) {
+    const next_cursor = Buffer.from(JSON.stringify({ k: key(last) }), "utf8").toString("base64url");
+    return { page, next_cursor };
+  }
+  return { page };
 }
