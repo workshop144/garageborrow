@@ -8,7 +8,8 @@ export type MeProfile = {
   phone: string;
   // Capabilities only: /v1/me does not reveal the member's tier label.
   isOwner: boolean;
-  aiEligible: boolean;
+  // Garages where the member's tier reaches that garage's AI minimum.
+  aiEligibleGarages: string[];
   onboardingSeen: boolean;
   ownedGarages: string[];
   celebrationPending: boolean;
@@ -30,7 +31,7 @@ type MeResponse = {
   memberships?: MeMembership[];
   owned_garages?: string[];
   is_owner?: boolean;
-  ai_eligible?: boolean;
+  ai_eligible_garages?: string[];
   celebration_pending?: boolean;
 };
 
@@ -40,7 +41,7 @@ function mapMe(r: MeResponse): MeProfile {
     displayName: r.user.display_name,
     phone: r.user.phone,
     isOwner: r.is_owner ?? (r.owned_garages ?? []).length > 0,
-    aiEligible: r.ai_eligible ?? false,
+    aiEligibleGarages: r.ai_eligible_garages ?? [],
     onboardingSeen: false,
     ownedGarages: r.owned_garages ?? [],
     celebrationPending: r.celebration_pending ?? false,

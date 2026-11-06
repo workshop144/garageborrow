@@ -155,6 +155,37 @@ export async function updateUserFields(
   }
 }
 
+// Removes attributes from an existing profile row (e.g. `deleted_at` when a
+// deletion request is cancelled). Returns false when the row is missing.
+export async function removeUserFields(
+  garage_id: string,
+  phone: string,
+  fields: string[],
+): Promise<boolean> {
+  if (fields.length === 0) return true;
+  const k = tenantUserKey(garage_id, phone);
+  const names: Record<string, string> = {};
+  const removes = fields.map((f, i) => {
+    names[`#r${i}`] = f;
+    return `#r${i}`;
+  });
+  try {
+    await ddb().send(
+      new UpdateCommand({
+        TableName: table(),
+        Key: { PK: k.pk, SK: k.sk },
+        UpdateExpression: `REMOVE ${removes.join(", ")}`,
+        ConditionExpression: "attribute_exists(PK)",
+        ExpressionAttributeNames: names,
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
+}
+
 export function isConditionFailure(err: unknown): boolean {
   return (err as { name?: string } | undefined)?.name === "ConditionalCheckFailedException";
 }
@@ -559,9 +590,23 @@ export async function getReservation(
 
 // Decline path: replaces a reservation only while it is still pending.
 export async function putReservationIfPending(r: Reservation): Promise<boolean> {
+  return putReservationIfStatus(r, "pending");
+}
+
+// Replaces a reservation only while its stored status is still `expected`.
+export async function putReservationIfStatus(
+  r: Reservation,
+  expected: Reservation["status"],
+): Promise<boolean> {
   try {
     await ddb().send(
-      new PutCommand({ TableName: table(), Item: reservationRow(r), ...STILL_PENDING }),
+      new PutCommand({
+        TableName: table(),
+        Item: reservationRow(r),
+        ConditionExpression: "#status = :expected",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":expected": expected },
+      }),
     );
     return true;
   } catch (err) {

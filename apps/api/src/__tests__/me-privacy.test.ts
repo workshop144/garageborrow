@@ -1,8 +1,10 @@
-import { reservationKey, gsi1ReservationByUser } from "@garageborrow/shared";
+import { reservationKey, gsi1ReservationByUser, tenantUserKey } from "@garageborrow/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../index.js";
 import {
+  listWaitlistForPhone,
+  listReservationsByGarage,
   putDonation,
   putNotification,
   putPushSubscription,
@@ -12,7 +14,9 @@ import {
 } from "../lib/repo.js";
 import {
   FAMILY_PHONE,
+  FRIEND_PHONE,
   GARAGE_ID,
+  HOWDY_PHONE,
   OWNER_PHONE,
   seedGarage,
   seedItemRecord,
@@ -20,7 +24,14 @@ import {
   seedMembership,
   seedUser,
 } from "./_fixtures.js";
-import { authHeader, installDdbMock, installFakeAuth, resetDdbStore, seedItem } from "./_setup.js";
+import {
+  authHeader,
+  installDdbMock,
+  installFakeAuth,
+  listAll,
+  resetDdbStore,
+  seedItem,
+} from "./_setup.js";
 
 beforeEach(() => {
   resetDdbStore();
@@ -35,26 +46,37 @@ function seedMember(): void {
   seedMembership(FAMILY_PHONE, "friend", { vouched_by_phone: OWNER_PHONE });
 }
 
-function seedReservation(status: "approved" | "pending" | "cancelled"): void {
-  const start = "2099-01-05T12:00:00Z";
+function seedReservation(
+  status: "approved" | "pending" | "cancelled",
+  opts: { id?: string; start?: string; end?: string; phone?: string } = {},
+): void {
+  const start = opts.start ?? "2099-01-05T12:00:00Z";
+  const phone = opts.phone ?? FAMILY_PHONE;
   const r = {
-    id: `res-${status}`,
+    id: opts.id ?? `res-${status}`,
     garage_id: GARAGE_ID,
     item_id: "item-1",
-    borrower_phone: FAMILY_PHONE,
+    borrower_phone: phone,
     start_at: start,
-    end_at: "2099-01-08T12:00:00Z",
+    end_at: opts.end ?? "2099-01-08T12:00:00Z",
     status,
     approval_required: true,
   };
   const k = reservationKey(GARAGE_ID, start.slice(0, 10), r.id);
-  seedItem({ ...r, PK: k.pk, SK: k.sk, ...gsi1ReservationByUser(FAMILY_PHONE, start) });
+  seedItem({ ...r, PK: k.pk, SK: k.sk, ...gsi1ReservationByUser(phone, start) });
 }
 
-async function requestDelete(key: string): Promise<Response> {
+async function requestDelete(key: string, phone = FAMILY_PHONE): Promise<Response> {
   return createApp().request("/v1/me/delete-request", {
     method: "POST",
-    headers: { ...authHeader(FAMILY_PHONE), "Idempotency-Key": key },
+    headers: { ...authHeader(phone), "Idempotency-Key": key },
+  });
+}
+
+async function cancelDelete(key: string, phone = FAMILY_PHONE): Promise<Response> {
+  return createApp().request("/v1/me/delete-request/cancel", {
+    method: "POST",
+    headers: { ...authHeader(phone), "Idempotency-Key": key },
   });
 }
 
@@ -95,6 +117,21 @@ describe("GET /v1/me membership projection", () => {
       "returns_late",
       "returns_on_time",
     ]);
+  });
+});
+
+describe("GET /v1/me ai_eligible_garages", () => {
+  it("lists only the garages where the member's tier reaches that garage's AI minimum", async () => {
+    seedGarage();
+    seedGarage({ id: "garage-b", owner_phone: HOWDY_PHONE });
+    seedUser(OWNER_PHONE);
+    seedUser(FAMILY_PHONE, { garages_member_of: [GARAGE_ID, "garage-b"] });
+    seedMembership(FAMILY_PHONE, "family");
+    seedMembership(FAMILY_PHONE, "howdy", { garage_id: "garage-b" });
+    const res = await createApp().request("/v1/me", { headers: authHeader(FAMILY_PHONE) });
+    const body = (await res.json()) as { ai_eligible_garages: string[]; ai_eligible?: unknown };
+    expect(body.ai_eligible_garages).toEqual([GARAGE_ID]);
+    expect(body.ai_eligible).toBeUndefined();
   });
 });
 
@@ -148,6 +185,108 @@ describe("accounts scheduled for deletion", () => {
     seedReservation("cancelled");
     expect((await requestDelete("del-ok")).status).toBe(200);
   });
+
+  it("an approved reservation that has already ended does not block deletion", async () => {
+    seedMember();
+    seedReservation("approved", {
+      id: "res-past",
+      start: "2020-01-05T12:00:00Z",
+      end: "2020-01-08T12:00:00Z",
+    });
+    expect((await requestDelete("del-past")).status).toBe(200);
+  });
+
+  it("the member can cancel an upcoming approved reservation, then delete", async () => {
+    seedMember();
+    seedReservation("approved");
+    expect((await requestDelete("del-before")).status).toBe(409);
+    const app = createApp();
+    const cancel = await app.request(`/v1/g/${GARAGE_ID}/reservations/res-approved`, {
+      method: "DELETE",
+      headers: authHeader(FAMILY_PHONE),
+    });
+    expect(cancel.status).toBe(200);
+    const body = (await cancel.json()) as { reservation: Record<string, unknown> };
+    expect(body.reservation["status"]).toBe("cancelled");
+    expect(body.reservation["PK"]).toBeUndefined();
+    // Repeating it is a no-op.
+    const again = await app.request(`/v1/g/${GARAGE_ID}/reservations/res-approved`, {
+      method: "DELETE",
+      headers: authHeader(FAMILY_PHONE),
+    });
+    expect(again.status).toBe(200);
+    expect((await requestDelete("del-after")).status).toBe(200);
+  });
+
+  it("nobody can cancel someone else's reservation", async () => {
+    seedMember();
+    seedMembership(FRIEND_PHONE, "friend");
+    seedUser(FRIEND_PHONE);
+    seedReservation("approved");
+    const res = await createApp().request(`/v1/g/${GARAGE_ID}/reservations/res-approved`, {
+      method: "DELETE",
+      headers: authHeader(FRIEND_PHONE),
+    });
+    expect(res.status).toBe(404);
+    const [stored] = await listReservationsByGarage(GARAGE_ID);
+    expect(stored?.status).toBe("approved");
+  });
+
+  it("withdraws the caller's pending requests and waitlist places", async () => {
+    seedMember();
+    seedReservation("pending");
+    seedReservation("pending", { id: "res-other", phone: OWNER_PHONE });
+    await putWaitlist({
+      id: "wait-1",
+      garage_id: GARAGE_ID,
+      item_id: "item-1",
+      borrower_phone: FAMILY_PHONE,
+      joined_at: "2026-04-02T12:00:00Z",
+      position: 0,
+      notify_when_available: true,
+    });
+    expect((await requestDelete("del-pending")).status).toBe(200);
+    const byId = new Map((await listReservationsByGarage(GARAGE_ID)).map((r) => [r.id, r]));
+    expect(byId.get("res-pending")?.status).toBe("cancelled");
+    expect(byId.get("res-other")?.status).toBe("pending");
+    expect(await listWaitlistForPhone(GARAGE_ID, FAMILY_PHONE)).toHaveLength(0);
+  });
+
+  it("cancelling the request restores access and is idempotent", async () => {
+    seedMember();
+    expect((await requestDelete("del-undo")).status).toBe(200);
+    const app = createApp();
+    expect(
+      (await app.request(`/v1/g/${GARAGE_ID}`, { headers: authHeader(FAMILY_PHONE) })).status,
+    ).toBe(403);
+
+    const res = await cancelDelete("undo-1");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { status: string }).status).toBe("deletion_cancelled");
+    expect(
+      (await app.request(`/v1/g/${GARAGE_ID}`, { headers: authHeader(FAMILY_PHONE) })).status,
+    ).toBe(200);
+    const k = tenantUserKey(GARAGE_ID, FAMILY_PHONE);
+    const profile = listAll().find((r) => r["PK"] === k.pk && r["SK"] === k.sk);
+    expect(profile).toBeDefined();
+    expect(profile?.["deleted_at"]).toBeUndefined();
+
+    // A second cancel (new key) with nothing pending gives the same answer.
+    expect((await cancelDelete("undo-2")).status).toBe(200);
+  });
+
+  it("the garage owner keeps garage and item access after requesting deletion", async () => {
+    seedMember();
+    seedItemRecord();
+    expect((await requestDelete("del-owner", OWNER_PHONE)).status).toBe(200);
+    const app = createApp();
+    const garage = await app.request(`/v1/g/${GARAGE_ID}`, { headers: authHeader(OWNER_PHONE) });
+    expect(garage.status).toBe(200);
+    const items = await app.request(`/v1/g/${GARAGE_ID}/items`, {
+      headers: authHeader(OWNER_PHONE),
+    });
+    expect(items.status).toBe(200);
+  });
 });
 
 describe("GET /v1/me/data-export", () => {
@@ -174,6 +313,7 @@ describe("GET /v1/me/data-export", () => {
       condition: "good",
       status: "accepted",
       decided_by_phone: OWNER_PHONE,
+      owner_notes: "private-owner-note",
       created_at: "2026-04-02T12:00:00Z",
     });
     await putWishlistRequest({
@@ -195,7 +335,7 @@ describe("GET /v1/me/data-export", () => {
       id: "n-1",
       user_phone: FAMILY_PHONE,
       type: "loan_reminder",
-      payload: {},
+      payload: { contact: { phone: OWNER_PHONE }, text: `call ${OWNER_PHONE}` },
       channel: "inapp",
       sent_at: "2026-04-02T12:00:00Z",
     });
@@ -251,5 +391,11 @@ describe("GET /v1/me/data-export", () => {
     expect(text).not.toContain("secret-");
     expect(text).not.toContain(OWNER_PHONE);
     expect(body["memberships"]?.[0]?.["notes"]).toBeUndefined();
+    expect(text).not.toContain("private-owner-note");
+    expect(body["donations"]?.[0]?.["owner_notes"]).toBeUndefined();
+    expect(body["notifications"]?.[0]?.["payload"]).toEqual({
+      contact: {},
+      text: "call [redacted]",
+    });
   });
 });

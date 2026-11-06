@@ -126,7 +126,7 @@ describe("Pegboard AI gating", () => {
         return jsonResponse({
           user: baseUser,
           is_owner: opts.tier === "owner",
-          ai_eligible: opts.tier === "family",
+          ai_eligible_garages: opts.tier === "family" ? ["demo-garage"] : [],
           owned_garages: opts.tier === "owner" ? ["demo-garage"] : [],
           memberships: [],
           celebration_pending: false,

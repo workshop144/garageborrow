@@ -8,11 +8,12 @@ import {
   patchSchemaOf,
   tierRank,
 } from "@garageborrow/shared";
-import type { GarageMembership, User } from "@garageborrow/shared";
+import type { GarageMembership, Reservation, User } from "@garageborrow/shared";
 
 import { mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
+import { memberDonationView } from "../lib/member-views.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import {
   getGarage,
@@ -20,6 +21,7 @@ import {
   getNotification,
   getUserAnyGarage,
   deleteInvite,
+  deleteWaitlist,
   listAllWishlistVotesForVoter,
   listDonations,
   listInvitesForPhone,
@@ -32,7 +34,9 @@ import {
   putMembership,
   putNotification,
   putPushSubscription,
+  putReservationIfStatus,
   putUser,
+  removeUserFields,
   updateUserFields,
 } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
@@ -77,7 +81,7 @@ meRoutes.get("/v1/me", async (c) => {
   const memberships: GarageMembership[] = [];
   const owned: string[] = [];
   let celebrationPending = false;
-  let aiEligible = false;
+  const aiEligibleGarages: string[] = [];
   const ts = nowIso();
 
   for (const garageId of primary.garages_member_of) {
@@ -85,9 +89,11 @@ meRoutes.get("/v1/me", async (c) => {
     const g = await getGarage(garageId);
     if (m) memberships.push(m);
     if (g && g.owner_phone === user.phone) owned.push(garageId);
-    // A capability, not the tier label: whether the member's tier reaches the
-    // garage's AI minimum (drives the "AI coming soon" card).
-    else if (m && g && tierRank(m.tier) >= tierRank(g.ai_min_tier)) aiEligible = true;
+    // A capability, not the tier label: the garages where the member's tier
+    // reaches that garage's AI minimum (drives the "AI coming soon" card, which
+    // Pegboard checks against the garage it is showing).
+    else if (m && g && tierRank(m.tier) >= tierRank(g.ai_min_tier))
+      aiEligibleGarages.push(garageId);
   }
 
   // Consume celebration_pending the first time /me is read after the owner
@@ -113,7 +119,7 @@ meRoutes.get("/v1/me", async (c) => {
     memberships: memberships.map(memberMembershipView),
     owned_garages: owned,
     is_owner: owned.length > 0,
-    ai_eligible: aiEligible,
+    ai_eligible_garages: aiEligibleGarages,
     celebration_pending: celebrationPending,
   });
 });
@@ -230,28 +236,70 @@ meRoutes.post("/v1/me/delete-request", requireIdempotencyKey(), async (c) => {
   const user = mustUser(c);
   const primary = await getUserAnyGarage(user.phone);
   if (!primary) throw new ApiError("not_found", "User not found");
-  // A pending deletion locks the account out of every garage and silences its
-  // notifications, and the cleaner later pseudonymises open loans. Gear that is
-  // still out, or a reservation the owner already approved, has to be settled
-  // first.
+  // A pending deletion locks a member out of every garage (owners excepted,
+  // see loadGarageContext) and silences notifications, and the cleaner later
+  // pseudonymises open loans. Gear that is still out, or an approved
+  // reservation that has not ended yet, has to be settled first. Approved
+  // reservations whose window is over hold nothing and do not block.
+  const now = Date.now();
   const openLoans = (await listUserIndexRows(user.phone, "LOAN#")).filter(
     (l) => l["status"] === "active" || l["status"] === "overdue",
   );
-  const approvedReservations = (await listUserIndexRows(user.phone, "RES#")).filter(
-    (r) => r["status"] === "approved",
+  const reservations = (await listUserIndexRows(user.phone, "RES#")) as unknown as Reservation[];
+  const currentApproved = reservations.filter(
+    (r) => r.status === "approved" && Date.parse(r.end_at) > now,
   );
-  if (openLoans.length > 0 || approvedReservations.length > 0) {
+  if (openLoans.length > 0 || currentApproved.length > 0) {
     throw new ApiError(
       "conflict",
-      "Return borrowed items and cancel approved reservations before deleting your account",
+      "Return borrowed items and cancel upcoming reservations (My Stuff) before deleting your account",
     );
   }
   const ts = nowIso();
   for (const garageId of primary.garages_member_of) {
     await updateUserFields(garageId, user.phone, { deleted_at: ts });
   }
+  // Nothing may be handed to an account that can no longer act: withdraw the
+  // caller's pending requests (so the owner cannot approve them) and waitlist
+  // places (so a promotion never lands on them). The pending write is
+  // conditional; one the owner approved in the meantime is left as it is.
+  for (const r of reservations.filter((x) => x.status === "pending")) {
+    const {
+      PK: _pk,
+      SK: _sk,
+      GSI1PK: _gpk,
+      GSI1SK: _gsk,
+      ...stored
+    } = r as Reservation & Record<string, unknown>;
+    await putReservationIfStatus({ ...stored, status: "cancelled" }, "pending");
+  }
+  for (const garageId of primary.garages_member_of) {
+    for (const w of await listWaitlistForPhone(garageId, user.phone)) {
+      await deleteWaitlist(garageId, w.item_id, w.joined_at, user.phone);
+    }
+  }
   // The account-cleaner Lambda hard-deletes records 30 days after deleted_at.
   return c.json({ scheduled_for_hard_delete_at: ts, status: "deletion_requested" });
+});
+
+// Undo a deletion request within the 30-day window: clears deleted_at on every
+// profile row, which restores garage access and notifications. Idempotent: an
+// account with no pending deletion gets the same answer. Requests withdrawn by
+// the delete-request (pending reservations, waitlist places) stay withdrawn.
+// After the cleaner has run there are no profile rows left, so this is a 404.
+meRoutes.use("/v1/me/delete-request/cancel", idempotency());
+meRoutes.post("/v1/me/delete-request/cancel", requireIdempotencyKey(), async (c) => {
+  const user = mustUser(c);
+  const profiles = await listUserProfiles(user.phone);
+  if (profiles.length === 0) throw new ApiError("not_found", "User not found");
+  for (const p of profiles) {
+    if (!p.deleted_at) continue;
+    const pk = (p as { PK?: string }).PK;
+    if (typeof pk === "string" && pk.startsWith("TENANT#")) {
+      await removeUserFields(pk.slice(7), user.phone, ["deleted_at"]);
+    }
+  }
+  return c.json({ status: "deletion_cancelled" });
 });
 
 // Table keys and index attributes are storage details, not the user's data.
@@ -259,14 +307,33 @@ const STORAGE_KEY = /^(PK|SK|GSI\d+(PK|SK))$/;
 // Phone numbers that are not the caller's (the owner who vouched or decided)
 // stay out of the export: members never see other people's phones.
 const PHONE_VALUE = /^\+\d{6,15}$/;
+// The same inside free text (a note or notification payload quoting a number).
+const PHONE_IN_TEXT = /\+\d{6,15}\b/g;
 
+function exportValue(v: unknown, callerPhone: string): unknown {
+  if (typeof v === "string") {
+    return v.replace(PHONE_IN_TEXT, (m) => (m === callerPhone ? m : "[redacted]"));
+  }
+  if (Array.isArray(v)) {
+    return v
+      .filter((x) => !(typeof x === "string" && PHONE_VALUE.test(x) && x !== callerPhone))
+      .map((x) => exportValue(x, callerPhone));
+  }
+  if (v !== null && typeof v === "object") return exportRow(v, callerPhone);
+  return v;
+}
+
+// Drops storage keys and other people's phone-valued fields at every depth
+// (nested payloads included) and redacts other phones quoted inside text.
 function exportRow(row: object, callerPhone: string): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(row).filter(
-      ([k, v]) =>
-        !STORAGE_KEY.test(k) &&
-        !(typeof v === "string" && PHONE_VALUE.test(v) && v !== callerPhone),
-    ),
+    Object.entries(row)
+      .filter(
+        ([k, v]) =>
+          !STORAGE_KEY.test(k) &&
+          !(typeof v === "string" && PHONE_VALUE.test(v) && v !== callerPhone),
+      )
+      .map(([k, v]) => [k, exportValue(v, callerPhone)]),
   );
 }
 
@@ -303,7 +370,11 @@ meRoutes.get("/v1/me/data-export", async (c) => {
     const m = await getMembership(garageId, phone);
     if (m) memberships.push(memberMembershipView(m));
     waitlist.push(...(await listWaitlistForPhone(garageId, phone)));
-    donations.push(...(await listDonations(garageId)).filter((d) => d.donor_phone === phone));
+    donations.push(
+      ...(await listDonations(garageId))
+        .filter((d) => d.donor_phone === phone)
+        .map(memberDonationView),
+    );
     wishlistRequests.push(
       ...(await listWishlistRequests(garageId)).filter((w) => w.requester_phone === phone),
     );
@@ -386,7 +457,7 @@ meRoutes.get("/v1/me/donations", async (c) => {
     }
   }
   all.sort((a, b) => b.created_at.localeCompare(a.created_at));
-  const { page, next_cursor } = paginate(all, params);
+  const { page, next_cursor } = paginate(all.map(memberDonationView), params);
   return c.json(next_cursor ? { donations: page, next_cursor } : { donations: page });
 });
 

@@ -99,7 +99,7 @@ export function seedMembership(
     celebration_pending: false,
     ...overrides,
   };
-  const k = tenantMemberKey(GARAGE_ID, phone);
+  const k = tenantMemberKey(m.garage_id, phone);
   seedItem({ ...m, PK: k.pk, SK: k.sk });
   return m;
 }

@@ -7,6 +7,7 @@ import { mustGarage, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
+import { memberDonationView } from "../lib/member-views.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import { PhotoKey } from "../lib/photo-key.js";
 import {
@@ -84,7 +85,7 @@ donationRoutes.get("/v1/g/:garage/donations/mine", async (c) => {
   const mine = all
     .filter((d) => d.donor_phone === user.phone)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
-  const { page, next_cursor } = paginate(mine, params);
+  const { page, next_cursor } = paginate(mine.map(memberDonationView), params);
   return c.json(next_cursor ? { donations: page, next_cursor } : { donations: page });
 });
 
