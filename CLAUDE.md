@@ -1,5 +1,15 @@
 # Claude Code instructions for GarageBorrow
 
+## Session ritual
+
+- Every session, before doing anything: read STATE.md, ROADMAP.md, LESSONS.md, then the task or phase prompt.
+- State is in the repo, not in memory. Update STATE.md when you finish meaningful work. Commit before stopping.
+- If stuck, write a clear BLOCKED entry in STATE.md with exact next steps.
+- Update STATE.md in the same commit as the change it describes. CI `state-guard` fails a PR that changes `apps/`, `packages/`, `infra/`, `scripts/` or workflows without touching STATE.md, unless the PR title starts with `chore` or `deps`.
+- New decisions go in `docs/DECISIONS.md` (append only). New incidents go at the top of LESSONS.md. Each phase writes `docs/plans/<phase>.md` before building.
+- A phase is done only after its `just verify-phase-N` target passes and the output is pasted into STATE.md. `just check` is the local CI equivalent.
+- Never write the deployment's real place, domain or people into repo files; they live in repository variables.
+
 ## Standard PR Workflow
 
 Every feature branch must run `/security-review` locally before pushing
