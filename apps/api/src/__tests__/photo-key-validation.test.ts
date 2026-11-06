@@ -73,4 +73,19 @@ describe("photo keys must be uploaded keys", () => {
     });
     expect(incident.status).toBe(400);
   });
+
+  it("rejects a URL as an owner-created item's photo key", async () => {
+    const item = {
+      name: "Drill",
+      description: "Cordless",
+      category: "power",
+      primary_photo_key: "https://x.cloudfront.net/t.gif",
+    };
+    expect((await post("/items", OWNER_PHONE, item)).status).toBe(400);
+    const ok = await post("/items", OWNER_PHONE, {
+      ...item,
+      primary_photo_key: "uploads/tool_photo/01HX.jpg",
+    });
+    expect(ok.status).toBe(201);
+  });
 });

@@ -62,6 +62,15 @@ describe("POST /loans/:id/dispute", () => {
     expect(borrow.status).toBe(409);
   });
 
+  it("refuses a fresh borrower claim on a disputed loan", async () => {
+    expect((await post("/loans/loan-1/return", FAMILY_PHONE)).status).toBe(200);
+    expect((await post("/loans/loan-1/dispute", OWNER_PHONE, { reason: "No" })).status).toBe(200);
+    expect((await post("/loans/loan-1/return", FAMILY_PHONE)).status).toBe(409);
+
+    const loan = (await getLoan(GARAGE_ID, "loan-1")) as Record<string, unknown>;
+    expect(loan["actual_return_at"]).toBeUndefined();
+  });
+
   it("refuses a dispute when there is no return claim", async () => {
     const res = await post("/loans/loan-1/dispute", OWNER_PHONE, { reason: "?" });
     expect(res.status).toBe(409);

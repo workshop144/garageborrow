@@ -186,6 +186,12 @@ loanRoutes.post("/v1/g/:garage/loans/:id/return", async (c) => {
   if (loan.return_claimed_at) {
     throw new ApiError("conflict", "Return already claimed");
   }
+  // The owner disputed an earlier claim: the unit stays out until the owner
+  // records the return. A fresh claim would free the unit for availability
+  // while the auto-confirm sweep (which skips disputed loans) never closes it.
+  if (loan.disputed_at) {
+    throw new ApiError("conflict", "Return disputed; the owner will record it");
+  }
   // Mark return claimed; the actual `returned` status flips after a 48h
   // dispute window (see auto-confirm sweep) or when the owner confirms.
   const ts = nowIso();

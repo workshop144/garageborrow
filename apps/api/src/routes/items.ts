@@ -213,6 +213,9 @@ const ItemCreateSchema = ItemSchema.omit({
   retired_at: true,
 }).extend({
   status: ItemStatusSchema.optional(),
+  // The web renders only uploads/ keys, so refuse anything else here rather
+  // than store a photo that silently never shows.
+  primary_photo_key: PhotoKey,
 });
 
 itemRoutes.use("/v1/g/:garage/items", idempotency());
