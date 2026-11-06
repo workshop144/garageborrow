@@ -7,7 +7,7 @@ import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
-import { assertAvailable, commitAvailable } from "../lib/availability.js";
+import { assertAvailable, commitAvailable, commitLoanExtension } from "../lib/availability.js";
 import { LIABILITY_COPY_VERSION } from "../lib/liability.js";
 import { AUTO_CONFIRM_AFTER_MS, confirmClaimedReturns } from "../lib/loan-lifecycle.js";
 import { logger } from "../lib/logger.js";
@@ -37,6 +37,8 @@ loanRoutes.use("/v1/g/:garage/loans", requireAuth(), loadGarageContext());
 loanRoutes.use("/v1/g/:garage/loans/*", requireAuth(), loadGarageContext());
 
 export const MAX_LOAN_DAYS = 60;
+// Self-serve extensions per loan (3 days each); past that the owner decides.
+export const MAX_EXTENSIONS = 3;
 
 const BorrowSchema = z.object({
   item_id: z.string().min(1),
@@ -119,7 +121,7 @@ loanRoutes.post("/v1/g/:garage/loans/:id/extend", async (c) => {
   const user = mustUser(c);
   const id = c.req.param("id");
   if (!id) throw new ApiError("bad_request", "Missing id");
-  const loan = await getLoan(garage.id, id);
+  const loan: LoanRecord | undefined = await getLoan(garage.id, id);
   if (!loan) throw new ApiError("not_found", "Loan not found");
   if (loan.borrower_phone !== user.phone) {
     throw new ApiError("forbidden", "Not your loan");
@@ -127,7 +129,13 @@ loanRoutes.post("/v1/g/:garage/loans/:id/extend", async (c) => {
   if (loan.status !== "active") {
     throw new ApiError("conflict", "Loan is not active");
   }
-  const next: Loan = {
+  if (loan.return_claimed_at) {
+    throw new ApiError("conflict", "This loan is already marked returned");
+  }
+  if (loan.extension_count >= MAX_EXTENSIONS) {
+    throw new ApiError("conflict", "This loan can't be extended again; ask the owner");
+  }
+  const next: LoanRecord = {
     ...loan,
     expected_return_at: new Date(
       new Date(loan.expected_return_at).getTime() + 3 * 86400_000,
@@ -135,7 +143,8 @@ loanRoutes.post("/v1/g/:garage/loans/:id/extend", async (c) => {
     extension_count: loan.extension_count + 1,
     last_extended_at: nowIso(),
   };
-  if (!(await updateLoan(next, loan))) throw loanChanged();
+  // Refuses when the extra days collide with someone else's reservation.
+  await commitLoanExtension(loan, next);
   await invokeNotifier({
     type: "loan_extended",
     garage_id: garage.id,

@@ -13,6 +13,8 @@ import {
   listInstances,
   listLoansByGarage,
   listReservationsByGarage,
+  type LoanRecord,
+  replaceLoanWithItemLock,
 } from "./repo.js";
 
 // Owner-set item states that still accept borrows. all_loaned, broken,
@@ -90,7 +92,22 @@ export async function assertAvailable(check: AvailabilityCheck): Promise<string 
     }
   }
   if (!check.commits) return instanceId;
+  return assertUnitFree({ item, instances, target, borrowerPhone, window });
+}
 
+// Counts the item's commitments (out loans, other members' approved
+// reservations) overlapping `window` and throws unless a unit is left:
+// `target` itself when given, otherwise any usable one. Returns the unit to
+// record. `excludeLoanId` leaves out the loan being extended.
+async function assertUnitFree(args: {
+  item: Item;
+  instances: Instance[];
+  target: Instance | undefined;
+  borrowerPhone: string;
+  window: Window;
+  excludeLoanId?: string;
+}): Promise<string | undefined> {
+  const { item, instances, target, borrowerPhone, window } = args;
   const [loans, reservations] = await Promise.all([
     listLoansByGarage(item.garage_id),
     listReservationsByGarage(item.garage_id),
@@ -99,6 +116,7 @@ export async function assertAvailable(check: AvailabilityCheck): Promise<string 
     ...loans.filter(
       (l) =>
         l.item_id === item.id &&
+        l.id !== args.excludeLoanId &&
         OUT_LOAN_STATUS.has(l.status) &&
         // A claimed return is back on the shelf while the owner's dispute window runs.
         !l.actual_return_at &&
@@ -165,4 +183,33 @@ export async function commitAvailable<T>(
     }
   }
   throw new ApiError("conflict", "Someone else just took this item; try again");
+}
+
+// Extending a loan holds its unit for [old due, new due]. That stretch must
+// not run into another member's approved reservation or out loan on the same
+// unit (or on the only unit of a single-unit item). The garage-open and item
+// status checks do not apply: the unit is already out with this borrower.
+// The check and the loan write commit against the item lock, like a borrow.
+export async function commitLoanExtension(prev: LoanRecord, next: LoanRecord): Promise<void> {
+  const window = {
+    start: Date.parse(prev.expected_return_at),
+    end: Date.parse(next.expected_return_at),
+  };
+  for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
+    const seen = await getItemLockVersion(prev.garage_id, prev.item_id);
+    const item = await getItem(prev.garage_id, prev.item_id);
+    if (!item) throw new ApiError("not_found", "Item not found");
+    const instances = await listInstances(item.garage_id, item.id);
+    const target = prev.instance_id ? instances.find((i) => i.id === prev.instance_id) : undefined;
+    await assertUnitFree({
+      item,
+      instances,
+      target,
+      borrowerPhone: prev.borrower_phone,
+      window,
+      excludeLoanId: prev.id,
+    });
+    if (await replaceLoanWithItemLock(prev.garage_id, prev.item_id, seen, next, prev)) return;
+  }
+  throw new ApiError("conflict", "This loan or item just changed; reload and try again");
 }

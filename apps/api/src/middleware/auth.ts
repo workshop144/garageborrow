@@ -47,7 +47,9 @@ export function claimsFromPayload(
     throw new ApiError("unauthorized", "Token missing a verified phone number");
   }
   const aud = payload.aud;
-  const tokenClient = Array.isArray(aud) ? (aud[0] as string | undefined) : (aud as string | undefined);
+  const tokenClient = Array.isArray(aud)
+    ? (aud[0] as string | undefined)
+    : (aud as string | undefined);
   if (!tokenClient || (expectedClient && tokenClient !== expectedClient)) {
     throw new ApiError("unauthorized", "Token issued for a different client");
   }

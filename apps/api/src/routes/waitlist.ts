@@ -37,8 +37,7 @@ waitlistRoutes.delete("/v1/g/:garage/waitlist/:id", async (c) => {
     },
   });
   const found = r.Items?.[0] as
-    | { item_id: string; joined_at: string; borrower_phone: string }
-    | undefined;
+    { item_id: string; joined_at: string; borrower_phone: string } | undefined;
   if (!found) throw new ApiError("not_found", "Waitlist entry not found");
   await deleteWaitlist(garage.id, found.item_id, found.joined_at, found.borrower_phone);
   // Renumber positions for remaining entries on this item.

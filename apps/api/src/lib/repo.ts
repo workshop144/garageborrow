@@ -483,6 +483,43 @@ export async function commitWithItemLock(
   }
 }
 
+// Replaces a loan (conditional on its rev, see updateLoan) and bumps the
+// item's lock from `seenVersion` in one transaction. False when either moved.
+export async function replaceLoanWithItemLock(
+  garage_id: string,
+  item_id: string,
+  seenVersion: number,
+  next: LoanRecord,
+  prev: LoanRecord,
+): Promise<boolean> {
+  const lock = itemLockKey(garage_id, item_id);
+  try {
+    await ddb().send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: table(),
+              Item: { ...lock, version: seenVersion + 1 },
+              ...(seenVersion === 0
+                ? { ConditionExpression: "attribute_not_exists(PK)" }
+                : {
+                    ConditionExpression: "version = :seen",
+                    ExpressionAttributeValues: { ":seen": seenVersion },
+                  }),
+            },
+          },
+          { Put: loanReplacePut(next, prev) },
+        ],
+      }),
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string }).name === "TransactionCanceledException") return false;
+    throw err;
+  }
+}
+
 export async function listReservationsByGarage(garage_id: string): Promise<Reservation[]> {
   const r = await queryAll({
     TableName: table(),
