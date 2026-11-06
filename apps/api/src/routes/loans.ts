@@ -9,6 +9,7 @@ import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { assertAvailable, commitAvailable } from "../lib/availability.js";
 import { LIABILITY_COPY_VERSION } from "../lib/liability.js";
+import { AUTO_CONFIRM_AFTER_MS, confirmClaimedReturns } from "../lib/loan-lifecycle.js";
 import { logger } from "../lib/logger.js";
 import {
   bumpMemberCounter,
@@ -221,23 +222,11 @@ loanRoutes.post("/v1/g/:garage/loans/:id/dispute", ownerOnly(), async (c) => {
   return c.json({ loan: next });
 });
 
-// Sweep helper exposed for the notifier/account-cleaner Lambdas (and tests):
-// after 48h of silence on a return claim, flip the loan to status=returned.
+// The notifier cron runs this per garage (see lib/loan-lifecycle.ts); kept
+// here for callers that only want the count.
 export async function autoConfirmReturns(
   garage_id: string,
-  cutoffMs = Date.now() - 48 * 3600_000,
+  cutoffMs = Date.now() - AUTO_CONFIRM_AFTER_MS,
 ): Promise<number> {
-  const cutoffIso = new Date(cutoffMs).toISOString();
-  const { listOverdueAutoConfirm } = await import("../lib/repo.js");
-  const candidates = await listOverdueAutoConfirm(garage_id, cutoffIso);
-  let count = 0;
-  for (const loan of candidates) {
-    const next: Loan = { ...loan, status: "returned" };
-    // Lost the race (owner return, dispute, a concurrent sweep): leave it.
-    if (!(await updateLoan(next, loan))) continue;
-    await bumpMemberCounter(garage_id, loan.borrower_phone, "borrows_active", -1);
-    await bumpMemberCounter(garage_id, loan.borrower_phone, "returns_on_time", 1);
-    count++;
-  }
-  return count;
+  return (await confirmClaimedReturns(garage_id, cutoffMs)).length;
 }

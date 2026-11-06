@@ -384,24 +384,25 @@ export function loanReplacePut(
   };
 }
 
+// Out loans whose return was claimed before the cutoff and not disputed.
+// (active or overdue: an overdue loan's claim confirms the same way.)
 export async function listOverdueAutoConfirm(
   garage_id: string,
   cutoffIso: string,
-): Promise<Loan[]> {
+): Promise<LoanRecord[]> {
   const r = await queryAll({
     TableName: table(),
     KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-    FilterExpression:
-      "#status = :active AND attribute_exists(return_claimed_at) AND return_claimed_at < :cutoff",
-    ExpressionAttributeNames: { "#status": "status" },
+    FilterExpression: "attribute_exists(return_claimed_at) AND return_claimed_at < :cutoff",
     ExpressionAttributeValues: {
       ":pk": `TENANT#${garage_id}`,
       ":sk": "LOAN#",
-      ":active": "active",
       ":cutoff": cutoffIso,
     },
   });
-  return (r.Items ?? []) as Loan[];
+  return ((r.Items ?? []) as LoanRecord[]).filter(
+    (l) => (l.status === "active" || l.status === "overdue") && !l.disputed_at,
+  );
 }
 
 // ─────────────────────────── Reservation ──────────────────────

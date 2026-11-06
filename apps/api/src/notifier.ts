@@ -39,8 +39,10 @@ import {
   listMembers,
   listWaitlist,
   listWishlistRequests,
+  type LoanRecord,
   queryAll,
 } from "./lib/repo.js";
+import { AUTO_CONFIRM_AFTER_MS, confirmClaimedReturns } from "./lib/loan-lifecycle.js";
 import { resolveItemAccess } from "@garageborrow/shared";
 import type {
   Loan,
@@ -334,6 +336,7 @@ interface CronCounts {
   overdue_2d: number;
   reservations_tomorrow: number;
   wishlist_digests: number;
+  returns_confirmed: number;
 }
 
 export async function runCronSweep(opts: CronOptions): Promise<CronCounts> {
@@ -342,17 +345,31 @@ export async function runCronSweep(opts: CronOptions): Promise<CronCounts> {
     overdue_2d: 0,
     reservations_tomorrow: 0,
     wishlist_digests: 0,
+    returns_confirmed: 0,
   };
   const garages = opts.garage_ids ?? (await listAllGarageIds());
   const now = opts.now;
   for (const garage_id of garages) {
-    const loans = await listLoansByGarage(garage_id);
+    // Close claimed returns past the 48h dispute window first, so their
+    // borrowers get no "due back" reminders and the next waiter hears.
+    const confirmed = await confirmClaimedReturns(garage_id, now.getTime() - AUTO_CONFIRM_AFTER_MS);
+    counts.returns_confirmed += confirmed.length;
+    for (const loan of confirmed) {
+      await fanOutWaitlist(
+        { type: "waitlist_unblocked", garage_id, payload: { item_id: loan.item_id } },
+        now,
+      );
+    }
+
+    const loans: LoanRecord[] = await listLoansByGarage(garage_id);
     const today = now.toISOString().slice(0, 10);
     const twoDaysAgo = new Date(now.getTime() - 2 * ONE_DAY_MS).toISOString().slice(0, 10);
     const tomorrow = new Date(now.getTime() + ONE_DAY_MS).toISOString().slice(0, 10);
 
     for (const loan of loans) {
       if (loan.status !== "active") continue;
+      // Handed back (claim inside the dispute window): nothing to remind about.
+      if (loan.return_claimed_at || loan.actual_return_at) continue;
       const dueDate = loan.expected_return_at.slice(0, 10);
       if (dueDate === today) {
         await dispatchLoanReminder(garage_id, loan, "loan_due_today", now);
