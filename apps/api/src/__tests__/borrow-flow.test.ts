@@ -93,3 +93,19 @@ describe("POST /loans duration_days bounds", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("malformed JSON bodies", () => {
+  it("answers 400, not 500", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    seedMembership(FAMILY_PHONE, "family");
+    const res = await createApp().request(`/v1/g/${GARAGE_ID}/loans`, {
+      method: "POST",
+      headers: { ...authHeader(FAMILY_PHONE), "content-type": "application/json" },
+      body: "{",
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("bad_request");
+  });
+});
