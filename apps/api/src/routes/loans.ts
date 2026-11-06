@@ -194,13 +194,23 @@ loanRoutes.post("/v1/g/:garage/loans/:id/dispute", ownerOnly(), async (c) => {
   const garage = mustGarage(c);
   const id = c.req.param("id");
   if (!id) throw new ApiError("bad_request", "Missing id");
-  const loan = await getLoan(garage.id, id);
+  const loan: LoanRecord | undefined = await getLoan(garage.id, id);
   if (!loan) throw new ApiError("not_found", "Loan not found");
   const body = DisputeSchema.parse(await c.req.json());
+  if ((loan.status !== "active" && loan.status !== "overdue") || !loan.return_claimed_at) {
+    throw new ApiError("conflict", "There is no return claim to dispute");
+  }
   const ts = nowIso();
-  const next: Loan & { disputed_at?: string; dispute_reason?: string } = { ...loan };
-  (next as { disputed_at?: string }).disputed_at = ts;
-  (next as { dispute_reason?: string }).dispute_reason = body.reason;
+  // Disputing says the unit is still out: drop the claim so availability
+  // counts the loan again and the auto-confirm sweep leaves it alone. A
+  // disputed loan is closed by the owner's own return, never auto-confirmed.
+  const {
+    actual_return_at: _actual,
+    return_claimed_at: _claimed,
+    return_claimed_by: _by,
+    ...rest
+  } = loan;
+  const next: LoanRecord = { ...rest, disputed_at: ts, dispute_reason: body.reason };
   if (!(await updateLoan(next, loan))) throw loanChanged();
   await invokeNotifier({
     type: "loan_disputed",
