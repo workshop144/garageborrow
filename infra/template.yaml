@@ -196,6 +196,10 @@ Resources:
   # role already has sns:Publish for resends.
   DefineAuthChallengeFunction:
     Type: AWS::Serverless::Function
+    # pnpm build bundles apps/api/dist; apps/api/Makefile only copies it, so
+    # sam build never runs npm install (S4-3).
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub garageborrow-define-auth-${Stage}
       CodeUri: ../apps/api/
@@ -220,6 +224,10 @@ Resources:
 
   CreateAuthChallengeFunction:
     Type: AWS::Serverless::Function
+    # pnpm build bundles apps/api/dist; apps/api/Makefile only copies it, so
+    # sam build never runs npm install (S4-3).
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub garageborrow-create-auth-${Stage}
       CodeUri: ../apps/api/
@@ -262,6 +270,10 @@ Resources:
 
   VerifyAuthChallengeFunction:
     Type: AWS::Serverless::Function
+    # pnpm build bundles apps/api/dist; apps/api/Makefile only copies it, so
+    # sam build never runs npm install (S4-3).
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub garageborrow-verify-auth-${Stage}
       CodeUri: ../apps/api/
@@ -560,6 +572,10 @@ Resources:
   # ─────────────────────── Lambda: api ───────────────────────
   ApiFunction:
     Type: AWS::Serverless::Function
+    # pnpm build bundles apps/api/dist; apps/api/Makefile only copies it, so
+    # sam build never runs npm install (S4-3).
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub garageborrow-api-${Stage}
       CodeUri: ../apps/api/
@@ -643,6 +659,10 @@ Resources:
   # ─────────────────────── Lambda: notifier ───────────────────────
   NotifierFunction:
     Type: AWS::Serverless::Function
+    # pnpm build bundles apps/api/dist; apps/api/Makefile only copies it, so
+    # sam build never runs npm install (S4-3).
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub garageborrow-notifier-${Stage}
       CodeUri: ../apps/api/
@@ -711,6 +731,10 @@ Resources:
   # resources break the cycle.
   ImageResizerFunction:
     Type: AWS::Serverless::Function
+    # pnpm build bundles apps/api/dist; apps/api/Makefile only copies it, so
+    # sam build never runs npm install (S4-3).
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub garageborrow-image-resizer-${Stage}
       CodeUri: ../apps/api/
@@ -756,6 +780,10 @@ Resources:
   # ─────────────────────── Lambda: accountCleaner ───────────────────────
   AccountCleanerFunction:
     Type: AWS::Serverless::Function
+    # pnpm build bundles apps/api/dist; apps/api/Makefile only copies it, so
+    # sam build never runs npm install (S4-3).
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub garageborrow-account-cleaner-${Stage}
       CodeUri: ../apps/api/

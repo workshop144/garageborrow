@@ -9,9 +9,11 @@ const common = {
   format: "esm",
   sourcemap: true,
   minify: !watch,
-  // sharp is shipped via the public sharp Lambda layer rather than bundled
+  // sharp is meant to ship via an arm64 sharp Lambda layer rather than bundled
   // (the platform-specific binary would balloon the zip and break cross-arch
-  // deploys). web-push is bundled normally — pure JS, ~50KB.
+  // deploys); no layer is attached in infra/template.yaml yet, see STATE.md.
+  // sam build copies only dist/ (apps/api/Makefile), so every external here must
+  // come from the Lambda runtime or a layer. web-push is bundled normally.
   external: ["@aws-sdk/*", "sharp"],
   banner: {
     js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
