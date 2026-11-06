@@ -220,7 +220,12 @@ Actions instead of running `make deploy` locally)
    - Provider URL: `https://token.actions.githubusercontent.com`
    - Audience: `sts.amazonaws.com`
      b. Create an IAM role `garageborrow-deploy` with this trust policy
-     (replace ACCOUNT and confirm the repo path):
+     (replace ACCOUNT). The deploy job runs in the `production` environment,
+     so GitHub's token `sub` is `repo:<owner>/<repo>:environment:production`.
+     Match it exactly (`StringEquals`, no wildcards, no branch-ref form), so
+     only that job can assume the role. Only the `deploy` job in
+     `deploy.yml` holds `id-token: write`; the `build` job that installs and
+     builds cannot request the token at all.
 
 ```json
 {
@@ -234,10 +239,8 @@ Actions instead of running `make deploy` locally)
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:broots144/garageborrow:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:workshop144/garageborrow:environment:production"
         }
       }
     }

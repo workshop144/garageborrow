@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { build, context } from "esbuild";
 
 const watch = process.argv.includes("--watch");
@@ -9,14 +10,19 @@ const common = {
   format: "esm",
   sourcemap: true,
   minify: !watch,
-  // sharp is shipped via the public sharp Lambda layer rather than bundled
+  // sharp is meant to ship via an arm64 sharp Lambda layer rather than bundled
   // (the platform-specific binary would balloon the zip and break cross-arch
-  // deploys). web-push is bundled normally — pure JS, ~50KB.
+  // deploys); no layer is attached in infra/template.yaml yet, see STATE.md.
+  // sam build copies only each handler's own bundle (apps/api/Makefile), so every
+  // external here must come from the Lambda runtime or a layer; the deploy
+  // workflow refuses to deploy otherwise (scripts/check-lambda-externals.mjs
+  // reads dist/externals.json, written below). web-push is bundled normally.
   external: ["@aws-sdk/*", "sharp"],
   banner: {
     js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
   },
   logLevel: "info",
+  metafile: true,
 };
 
 const targets = [
@@ -43,5 +49,15 @@ if (watch) {
   await Promise.all(ctxs.map((c) => c.watch()));
   console.log("esbuild watching...");
 } else {
-  await Promise.all(targets.map((t) => build({ ...common, ...t })));
+  const results = await Promise.all(targets.map((t) => build({ ...common, ...t })));
+  // Bare module specifiers each bundle still imports at runtime, per bundle file.
+  const externals = {};
+  for (const { metafile } of results) {
+    for (const [out, meta] of Object.entries(metafile.outputs)) {
+      if (out.endsWith(".map")) continue;
+      const mods = meta.imports.filter((i) => i.external).map((i) => i.path);
+      externals[out.replace(/^dist\//, "")] = [...new Set(mods)].sort();
+    }
+  }
+  await writeFile("dist/externals.json", `${JSON.stringify(externals, null, 2)}\n`);
 }
