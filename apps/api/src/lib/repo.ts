@@ -603,6 +603,47 @@ export async function putDonation(d: DonationOffer): Promise<void> {
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, d) }));
 }
 
+const DONATION_PENDING: RowCondition = {
+  ConditionExpression: "#status = :pending",
+  ExpressionAttributeNames: { "#status": "status" },
+  ExpressionAttributeValues: { ":pending": "pending" },
+};
+
+// Records the owner's decision only while the offer is still pending. On
+// accept, the new item and the decided offer land in one transaction, so a
+// double submit or a failure halfway cannot create two items for one offer.
+// Returns false when the offer was already decided.
+export async function decideDonation(d: DonationOffer, newItem?: Item): Promise<boolean> {
+  const dk = donationKey(d.garage_id, d.created_at.slice(0, 10), d.id);
+  const donationPut = { TableName: table(), Item: withKey(dk, d), ...DONATION_PENDING };
+  try {
+    if (!newItem) {
+      await ddb().send(new PutCommand(donationPut));
+      return true;
+    }
+    const ik = itemKey(newItem.garage_id, newItem.id);
+    await ddb().send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: table(),
+              Item: withKey(ik, newItem),
+              ConditionExpression: "attribute_not_exists(PK)",
+            },
+          },
+          { Put: donationPut },
+        ],
+      }),
+    );
+    return true;
+  } catch (err) {
+    const name = (err as { name?: string }).name;
+    if (isConditionFailure(err) || name === "TransactionCanceledException") return false;
+    throw err;
+  }
+}
+
 export async function listDonations(garage_id: string): Promise<DonationOffer[]> {
   const r = await queryAll({
     TableName: table(),

@@ -10,10 +10,10 @@ import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import {
   bumpWindowCounter,
+  decideDonation,
   getDonation,
   listDonations,
   putDonation,
-  putItem,
 } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { audit, setAuditDetails } from "../middleware/audit.js";
@@ -144,7 +144,9 @@ donationRoutes.post("/v1/g/:garage/admin/donations/:id/decide", async (c) => {
       decided_at: ts,
       decided_by_phone: user.phone,
     };
-    await putDonation(updated);
+    if (!(await decideDonation(updated))) {
+      throw new ApiError("conflict", "Donation already decided");
+    }
     setAuditDetails(c, {
       action_type: "donation.declined",
       entity_type: "donation",
@@ -179,7 +181,6 @@ donationRoutes.post("/v1/g/:garage/admin/donations/:id/decide", async (c) => {
     created_at: ts,
     updated_at: ts,
   };
-  await putItem(item);
   const updated: DonationOffer = {
     ...offer,
     status: "accepted",
@@ -188,7 +189,9 @@ donationRoutes.post("/v1/g/:garage/admin/donations/:id/decide", async (c) => {
     decided_by_phone: user.phone,
     resulting_item_id: item.id,
   };
-  await putDonation(updated);
+  if (!(await decideDonation(updated, item))) {
+    throw new ApiError("conflict", "Donation already decided");
+  }
   setAuditDetails(c, {
     action_type: "donation.accepted",
     entity_type: "donation",
