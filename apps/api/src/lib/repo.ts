@@ -171,6 +171,21 @@ export async function listUserProfiles(phone: string): Promise<User[]> {
   return (r.Items ?? []) as User[];
 }
 
+// Rows indexed under this phone in GSI1 (byUser): "USER#" profiles, "LOAN#"
+// loans and "RES#" reservations, chosen by the GSI1SK prefix.
+export async function listUserIndexRows(
+  phone: string,
+  skPrefix: "USER#" | "LOAN#" | "RES#",
+): Promise<Record<string, unknown>[]> {
+  const r = await queryAll({
+    TableName: table(),
+    IndexName: "byUser",
+    KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": skPrefix },
+  });
+  return r.Items ?? [];
+}
+
 export async function getUserAnyGarage(phone: string): Promise<User | undefined> {
   // Users are duplicated per tenant; for /v1/me we look up via the phone in
   // every garage they belong to. The "primary" record is whichever returns
@@ -586,6 +601,19 @@ export async function listWaitlist(garage_id: string, item_id: string): Promise<
   return (r.Items ?? []) as WaitlistEntry[];
 }
 
+// Every waitlist entry in a garage that belongs to this phone (any item).
+export async function listWaitlistForPhone(
+  garage_id: string,
+  phone: string,
+): Promise<WaitlistEntry[]> {
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `TENANT#${garage_id}`, ":sk": "WAIT#" },
+  });
+  return ((r.Items ?? []) as WaitlistEntry[]).filter((w) => w.borrower_phone === phone);
+}
+
 export async function deleteWaitlist(
   garage_id: string,
   item_id: string,
@@ -909,6 +937,15 @@ export async function getNotification(
 export async function putPushSubscription(p: PushSubscription, hash: string): Promise<void> {
   const k = pushSubscriptionKey(p.user_phone, hash);
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, p) }));
+}
+
+export async function listPushSubscriptions(phone: string): Promise<PushSubscription[]> {
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": "PUSH#" },
+  });
+  return (r.Items ?? []) as PushSubscription[];
 }
 
 // ─────────────────────────── Rate limit ───────────────────────

@@ -1,6 +1,6 @@
 # Current Build State
 
-Last updated: 2026-11-06 by Claude (agent): bug-fix sweep of 17 verified findings in loans, notifier, idempotency, donations, cleaner and resizer (branch `fix/bugs-2026-11-06`); production deploy has never run.
+Last updated: 2026-11-06 by Claude (agent): /v1/me privacy and deletion fixes (S1-1, S1-3, S5-3, branch `sec/2026-11-06c-me-routes-privacy-and-deletion`); production deploy has never run.
 
 ## Phase status
 
@@ -18,6 +18,9 @@ Last updated: 2026-11-06 by Claude (agent): bug-fix sweep of 17 verified finding
 - Auth is phone-only via Cognito custom auth. Accounts are created by invite only (no self-service SignUp, PR #14). The caller's identity is the verified phone from the ID token (PR #12). One SMS per sign-in, the code is reused across challenge retries (PR #9).
 - Uploads: presigned URL signs the declared size (PR #10), per-user daily quota (PR #13), photo keys no longer carry phone numbers; `scripts/migrate-photo-keys.ts` migrates old keys (PR #18).
 - Data export is a direct download, never emailed (PR #11). Members never see donor or voter phones (PR #3).
+- `/v1/me` (sec/2026-11-06c): memberships are a member-facing projection (`garage_id, joined_at, borrows_*, returns_*, celebration_pending`); owner `notes`, `tier`, `ai_budget_override_tokens`, `vouched_by_phone` and the top-level `tier` are gone. The web uses `is_owner` and the capability flag `ai_eligible` (tier reaches the garage's `ai_min_tier`) instead; the "Family member" badge on My Stuff was dropped.
+- Deletion (sec/2026-11-06c): `loadGarageContext` returns 403 once the caller's profile in that garage has `deleted_at`; `POST /v1/me/delete-request` is a 409 while the caller has active/overdue loans or approved reservations (read via GSI1, so eventually consistent). Owner `/admin` routes use `ownerOnly`, not `loadGarageContext`, and stay open to an owner who requested deletion.
+- `GET /v1/me/data-export` returns every record keyed by the phone: profiles, memberships (member view), loans and reservations (GSI1), waitlist, donations, wishlist requests and votes, notifications, push subscriptions (endpoint and created_at only). PK/SK/GSI attributes and other people's phone numbers are stripped. privacy.md describes the in-app JSON download.
 - Loans: last-unit commit is atomic and a closed garage blocks borrowing (PR #20).
 - Loan lifecycle (fix/bugs-2026-11-06): loan rows carry a `rev` and every replace is conditional on it (`updateLoan(next, prev)`). Only the borrower can claim a return, once; an owner dispute removes the claim so the unit counts as out again, and the borrower cannot claim a disputed loan again (only the owner's return closes it). The notifier cron auto-confirms undisputed claims older than 48h (`lib/loan-lifecycle.ts`), skips reminders for claimed loans, and settles member counters on time vs late; owner returns settle counters too and accept overdue loans. Extensions go through the availability check and the item lock, max 3 per loan. `duration_days` is capped at 60.
 - Approval-required borrows and reservations notify the owner (`borrow_request_pending`); the owner lists them at `GET /admin/reservations` and decides with `POST /admin/reservations/:id/decide`. The web app has no screen for this yet.
@@ -43,6 +46,7 @@ Last updated: 2026-11-06 by Claude (agent): bug-fix sweep of 17 verified finding
 - Before the Phase 3 first deploy: run `deploy.yml` by workflow_dispatch or `sam build` locally under pnpm 12, and check that sharp's linux binaries still end up in the Lambda bundle now that only esbuild may run install scripts.
 - `packages/shared` has no vitest config, so after `pnpm build` its test run also picks up compiled tests in `dist/__tests__` (119 becomes 238). Harmless but misleading; fix with a vitest config that excludes `dist`.
 
+- The web calls `POST /v1/me/delete-request/cancel` (useCancelDelete) but the API has no such route; a user who requests deletion cannot undo it and is now locked out of garage routes. Add the cancel route (clear `deleted_at` on every profile row).
 - Owner UI for pending borrow/reservation requests (list + approve/decline) is not built; the API endpoints exist.
 - Approving a borrow-sourced pending request (`source="borrow"`) only makes an approved reservation; `POST /loans` still sends approval-required items down the pending path even when the caller holds that approved reservation, so the member cannot turn it into a loan. Fix with the owner UI: either approve creates the Loan directly, or `POST /loans` skips approval for a caller holding an approved reservation covering now (PR #39 review).
 - Owner return and the auto-confirm sweep write the loan and then `settleReturnCounters` separately; if a counter bump fails after the loan write, `borrows_active` and on-time/late counters drift and are not retried. Low priority: move the bumps into the loan's TransactWrite (PR #39 review).

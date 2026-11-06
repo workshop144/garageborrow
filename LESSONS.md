@@ -2,6 +2,7 @@
 
 One line per lesson, newest first.
 
+- 2026-11-06: `/v1/me` returned raw membership rows, so members read the owner's private notes and their hidden tier, and the data export held one profile row. Rule: member-facing endpoints return an explicit projection, never a stored row, and the export is built from the same entity list the account cleaner scrubs (sec/2026-11-06c).
 - 2026-11-06: The 48h return auto-confirm existed and had tests, but nothing scheduled it, so claimed returns stayed active forever and reminders kept firing. Rule: every sweep helper is called from a scheduled entry point and has a test through that entry point (fix/bugs-2026-11-06).
 - 2026-11-06: Loan, donation and idempotency writes were read-check-then-unconditional-Put, so concurrent requests lost updates or ran twice. Rule: a state transition is a conditional write on the state that was read (`rev`, `#status = :expected`, `attribute_not_exists`), and a lost race is a 409 (fix/bugs-2026-11-06).
 - 2026-11-06: pnpm 12 runs dependency install scripts only for packages in `allowBuilds` (pnpm-workspace.yaml); everything else is skipped, and the install fails with ERR_PNPM_IGNORED_BUILDS when a package needs its script. Rule: a new native dependency gets added to `allowBuilds` in the same PR (PR #38).

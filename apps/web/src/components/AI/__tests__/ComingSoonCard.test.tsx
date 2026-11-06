@@ -125,7 +125,8 @@ describe("Pegboard AI gating", () => {
       if (url.endsWith("/me")) {
         return jsonResponse({
           user: baseUser,
-          tier: opts.tier,
+          is_owner: opts.tier === "owner",
+          ai_eligible: opts.tier === "family",
           owned_garages: opts.tier === "owner" ? ["demo-garage"] : [],
           memberships: [],
           celebration_pending: false,

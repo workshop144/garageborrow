@@ -45,10 +45,10 @@ describe("celebration_pending lifecycle", () => {
     expect(me1.status).toBe(200);
     const meBody1 = (await me1.json()) as {
       celebration_pending: boolean;
-      memberships: Array<{ celebration_pending: boolean; celebration_seen_at?: string }>;
+      memberships: Array<{ celebration_pending: boolean }>;
     };
     expect(meBody1.celebration_pending).toBe(true);
-    expect(meBody1.memberships[0]?.celebration_seen_at).toBeTruthy();
+    expect(meBody1.memberships[0]?.celebration_pending).toBe(false);
 
     const me2 = await app.request("/v1/me", { headers: authHeader(FAMILY_PHONE) });
     const meBody2 = (await me2.json()) as { celebration_pending: boolean };
@@ -83,15 +83,20 @@ describe("celebration_pending lifecycle", () => {
     expect(meBody.celebration_pending).toBe(false);
   });
 
-  it("/me top-level tier reflects ownership", async () => {
+  it("/me reports ownership without a tier label", async () => {
     seedGarage();
     seedUser(OWNER_PHONE);
     seedMembership(OWNER_PHONE, "family");
 
     const app = createApp();
     const me = await app.request("/v1/me", { headers: authHeader(OWNER_PHONE) });
-    const body = (await me.json()) as { tier: string; owned_garages: string[] };
-    expect(body.tier).toBe("owner");
+    const body = (await me.json()) as {
+      tier?: string;
+      is_owner: boolean;
+      owned_garages: string[];
+    };
+    expect(body.tier).toBeUndefined();
+    expect(body.is_owner).toBe(true);
     expect(body.owned_garages).toContain(GARAGE_ID);
   });
 });

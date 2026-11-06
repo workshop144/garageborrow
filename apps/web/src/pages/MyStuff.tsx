@@ -29,11 +29,6 @@ export default function MyStuff(): JSX.Element {
     <AppShell>
       <header className="mb-4">
         <h1 className="font-heading text-3xl text-gold-bright">My Stuff</h1>
-        {me.data?.tier === "family" ? (
-          <span className="mt-2 inline-block rounded-full bg-gold-bright/20 px-2 py-0.5 text-xs font-semibold text-gold-bright">
-            Family member
-          </span>
-        ) : null}
       </header>
 
       <StatsChips stats={data.stats} />

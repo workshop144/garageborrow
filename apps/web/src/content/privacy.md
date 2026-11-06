@@ -75,11 +75,11 @@ We do not:
 You can, at any time, from the app's settings:
 
 - View all the data we have about you
-- Export it (we'll email you a JSON file)
+- Export it: the app downloads a JSON file straight to your phone or browser, with your profile, memberships, loans, reservations, waitlist spots, donation offers, wishlist requests and votes, notifications, and push subscriptions. Nothing is emailed.
 - Change your display name
 - Toggle profile visibility (visible / hidden)
 - Change notification preferences
-- Delete your account and all associated personal data
+- Delete your account and all associated personal data (return anything you have borrowed and cancel approved reservations first; once you ask, the account can no longer borrow and is erased after 30 days)
 
 If you'd rather do any of the above by texting Dad instead, that works too.
 

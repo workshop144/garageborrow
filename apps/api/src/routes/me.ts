@@ -6,8 +6,9 @@ import {
   NotificationPrefsSchema,
   UserVisibilitySchema,
   patchSchemaOf,
+  tierRank,
 } from "@garageborrow/shared";
-import type { GarageMembership, TierName, User } from "@garageborrow/shared";
+import type { GarageMembership, User } from "@garageborrow/shared";
 
 import { mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
@@ -19,10 +20,15 @@ import {
   getNotification,
   getUserAnyGarage,
   deleteInvite,
+  listAllWishlistVotesForVoter,
   listDonations,
   listInvitesForPhone,
   listNotifications,
+  listPushSubscriptions,
+  listUserIndexRows,
   listUserProfiles,
+  listWaitlistForPhone,
+  listWishlistRequests,
   putMembership,
   putNotification,
   putPushSubscription,
@@ -37,7 +43,31 @@ export const meRoutes = new Hono<AppEnv>();
 
 meRoutes.use("*", requireAuth());
 
-const TIER_RANK: Record<TierName, number> = { howdy: 0, friend: 1, family: 2 };
+// What a member may see of their own membership row. The row also carries the
+// owner's private `notes`, the AI budget override, who vouched for them and
+// their tier label; those are owner-side data (routes/garage.ts hides the tier
+// label from members on purpose), so /v1/me returns this projection only.
+export interface MemberMembershipView {
+  garage_id: string;
+  joined_at: string;
+  borrows_total: number;
+  borrows_active: number;
+  returns_on_time: number;
+  returns_late: number;
+  celebration_pending: boolean;
+}
+
+export function memberMembershipView(m: GarageMembership): MemberMembershipView {
+  return {
+    garage_id: m.garage_id,
+    joined_at: m.joined_at,
+    borrows_total: m.borrows_total,
+    borrows_active: m.borrows_active,
+    returns_on_time: m.returns_on_time,
+    returns_late: m.returns_late,
+    celebration_pending: m.celebration_pending,
+  };
+}
 
 meRoutes.get("/v1/me", async (c) => {
   const user = mustUser(c);
@@ -47,13 +77,17 @@ meRoutes.get("/v1/me", async (c) => {
   const memberships: GarageMembership[] = [];
   const owned: string[] = [];
   let celebrationPending = false;
+  let aiEligible = false;
   const ts = nowIso();
 
   for (const garageId of primary.garages_member_of) {
     const m = await getMembership(garageId, user.phone);
-    if (m) memberships.push(m);
     const g = await getGarage(garageId);
+    if (m) memberships.push(m);
     if (g && g.owner_phone === user.phone) owned.push(garageId);
+    // A capability, not the tier label: whether the member's tier reaches the
+    // garage's AI minimum (drives the "AI coming soon" card).
+    else if (m && g && tierRank(m.tier) >= tierRank(g.ai_min_tier)) aiEligible = true;
   }
 
   // Consume celebration_pending the first time /me is read after the owner
@@ -74,24 +108,12 @@ meRoutes.get("/v1/me", async (c) => {
     }
   }
 
-  // Top-level tier: "owner" if they own any garage, otherwise the highest
-  // membership tier across their garages, defaulting to "howdy".
-  let topTier: TierName | "owner";
-  if (owned.length > 0) {
-    topTier = "owner";
-  } else {
-    let best: TierName = "howdy";
-    for (const m of memberships) {
-      if (TIER_RANK[m.tier] > TIER_RANK[best]) best = m.tier;
-    }
-    topTier = best;
-  }
-
   return c.json({
     user: primary,
-    memberships,
+    memberships: memberships.map(memberMembershipView),
     owned_garages: owned,
-    tier: topTier,
+    is_owner: owned.length > 0,
+    ai_eligible: aiEligible,
     celebration_pending: celebrationPending,
   });
 });
@@ -208,6 +230,22 @@ meRoutes.post("/v1/me/delete-request", requireIdempotencyKey(), async (c) => {
   const user = mustUser(c);
   const primary = await getUserAnyGarage(user.phone);
   if (!primary) throw new ApiError("not_found", "User not found");
+  // A pending deletion locks the account out of every garage and silences its
+  // notifications, and the cleaner later pseudonymises open loans. Gear that is
+  // still out, or a reservation the owner already approved, has to be settled
+  // first.
+  const openLoans = (await listUserIndexRows(user.phone, "LOAN#")).filter(
+    (l) => l["status"] === "active" || l["status"] === "overdue",
+  );
+  const approvedReservations = (await listUserIndexRows(user.phone, "RES#")).filter(
+    (r) => r["status"] === "approved",
+  );
+  if (openLoans.length > 0 || approvedReservations.length > 0) {
+    throw new ApiError(
+      "conflict",
+      "Return borrowed items and cancel approved reservations before deleting your account",
+    );
+  }
   const ts = nowIso();
   for (const garageId of primary.garages_member_of) {
     await updateUserFields(garageId, user.phone, { deleted_at: ts });
@@ -216,17 +254,82 @@ meRoutes.post("/v1/me/delete-request", requireIdempotencyKey(), async (c) => {
   return c.json({ scheduled_for_hard_delete_at: ts, status: "deletion_requested" });
 });
 
+// Table keys and index attributes are storage details, not the user's data.
+const STORAGE_KEY = /^(PK|SK|GSI\d+(PK|SK))$/;
+// Phone numbers that are not the caller's (the owner who vouched or decided)
+// stay out of the export: members never see other people's phones.
+const PHONE_VALUE = /^\+\d{6,15}$/;
+
+function exportRow(row: object, callerPhone: string): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(row).filter(
+      ([k, v]) =>
+        !STORAGE_KEY.test(k) &&
+        !(typeof v === "string" && PHONE_VALUE.test(v) && v !== callerPhone),
+    ),
+  );
+}
+
 // The export is returned to the signed-in caller as a JSON download. It used to be
 // emailed to a caller-chosen ?email= address (any recipient, via the operator's SES
 // sender); users have no verified email, so there is no address to bind it to.
+// It covers every record the service keys by the caller's phone (the same set
+// the account cleaner scrubs). Memberships use the member-facing view, so the
+// owner's private notes stay private here too.
 meRoutes.get("/v1/me/data-export", async (c) => {
   const user = mustUser(c);
-  const primary = await getUserAnyGarage(user.phone);
-  if (!primary) throw new ApiError("not_found", "User not found");
+  const phone = user.phone;
+  const profiles = await listUserIndexRows(phone, "USER#");
+  if (profiles.length === 0) throw new ApiError("not_found", "User not found");
+  const loans = await listUserIndexRows(phone, "LOAN#");
+  const reservations = await listUserIndexRows(phone, "RES#");
+
+  const garageIds = new Set<string>();
+  for (const p of profiles) {
+    for (const g of (p as unknown as User).garages_member_of ?? []) garageIds.add(g);
+    const pk = p["PK"];
+    if (typeof pk === "string" && pk.startsWith("TENANT#")) garageIds.add(pk.slice(7));
+  }
+  for (const r of [...loans, ...reservations]) {
+    if (typeof r["garage_id"] === "string") garageIds.add(r["garage_id"]);
+  }
+
+  const memberships: MemberMembershipView[] = [];
+  const waitlist: object[] = [];
+  const donations: object[] = [];
+  const wishlistRequests: object[] = [];
+  const wishlistVotes: object[] = [];
+  for (const garageId of [...garageIds].sort()) {
+    const m = await getMembership(garageId, phone);
+    if (m) memberships.push(memberMembershipView(m));
+    waitlist.push(...(await listWaitlistForPhone(garageId, phone)));
+    donations.push(...(await listDonations(garageId)).filter((d) => d.donor_phone === phone));
+    wishlistRequests.push(
+      ...(await listWishlistRequests(garageId)).filter((w) => w.requester_phone === phone),
+    );
+    wishlistVotes.push(...(await listAllWishlistVotesForVoter(garageId, phone)));
+  }
+  const notifications = await listNotifications(phone);
+  const pushSubscriptions = (await listPushSubscriptions(phone)).map((p) => ({
+    endpoint: p.endpoint,
+    created_at: p.created_at,
+  }));
+
+  const clean = (rows: object[]): Record<string, unknown>[] => rows.map((r) => exportRow(r, phone));
   const exportPayload = {
-    user: primary,
     exported_at: nowIso(),
-    garages: primary.garages_member_of,
+    phone,
+    garages: [...garageIds].sort(),
+    profiles: clean(profiles),
+    memberships,
+    loans: clean(loans),
+    reservations: clean(reservations),
+    waitlist: clean(waitlist),
+    donations: clean(donations),
+    wishlist_requests: clean(wishlistRequests),
+    wishlist_votes: clean(wishlistVotes),
+    notifications: clean(notifications),
+    push_subscriptions: pushSubscriptions,
   };
   c.header("Cache-Control", "no-store");
   c.header("Content-Disposition", 'attachment; filename="garageborrow-export.json"');
