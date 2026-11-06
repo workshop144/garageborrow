@@ -104,7 +104,7 @@ const ADMIN_TAB: Tab = { to: "/admin", label: "Admin", icon: ADMIN_ICON };
 export function BottomNav(): JSX.Element {
   const me = useMe();
   const garage = useGarageProfile();
-  const isOwner = me.data?.tier === "owner";
+  const isOwner = me.data?.isOwner === true;
   const wishlistOn = garage.data?.wishlist_enabled !== false;
   const tabs: Tab[] = [
     PEGBOARD_TAB,

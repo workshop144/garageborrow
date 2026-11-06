@@ -9,7 +9,7 @@ type Props = {
 };
 
 // Route wrapper for owner-only admin pages. Sources owner status from /v1/me
-// (tier === "owner") so it stays in sync if ownership ever changes server-side.
+// (is_owner) so it stays in sync if ownership ever changes server-side.
 export function AdminGuard({ children }: Props): JSX.Element {
   const me = useMe();
   if (me.isLoading) {
@@ -25,7 +25,7 @@ export function AdminGuard({ children }: Props): JSX.Element {
   if (me.isError || !me.data) {
     return <Navigate to="/" replace />;
   }
-  if (me.data.tier !== "owner") {
+  if (!me.data.isOwner) {
     return <Navigate to="/" replace data-testid="admin-guard-redirect" />;
   }
   return <>{children}</>;

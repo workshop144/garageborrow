@@ -23,8 +23,8 @@ describe("GET /v1/me/data-export", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toContain("attachment");
     expect(res.headers.get("cache-control")).toBe("no-store");
-    const body = (await res.json()) as { user: { phone: string }; garages: string[] };
-    expect(body.user.phone).toBe(FAMILY_PHONE);
+    const body = (await res.json()) as { profiles: { phone: string }[]; garages: string[] };
+    expect(body.profiles[0]?.phone).toBe(FAMILY_PHONE);
     expect(body.garages).toContain(GARAGE_ID);
   });
 

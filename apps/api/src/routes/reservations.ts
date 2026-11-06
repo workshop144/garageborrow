@@ -8,7 +8,13 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { assertAvailable, commitAvailable } from "../lib/availability.js";
 import { invokeNotifier } from "../lib/invoke.js";
-import { getItem, putReservation, reservationRow } from "../lib/repo.js";
+import {
+  getItem,
+  getReservation,
+  putReservation,
+  putReservationIfStatus,
+  reservationRow,
+} from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
 import { loadGarageContext } from "../middleware/garage-context.js";
@@ -17,6 +23,7 @@ import { idempotency } from "../middleware/idempotency.js";
 export const reservationRoutes = new Hono<AppEnv>();
 
 reservationRoutes.use("/v1/g/:garage/reservations", requireAuth(), loadGarageContext());
+reservationRoutes.use("/v1/g/:garage/reservations/*", requireAuth(), loadGarageContext());
 
 const ReservationCreateSchema = z.object({
   item_id: z.string().min(1),
@@ -69,4 +76,36 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
     });
   }
   return c.json({ reservation, created_at: nowIso() }, 201);
+});
+
+// DELETE /v1/g/:garage/reservations/:id — the borrower cancels their own
+// pending or approved reservation (My Stuff "Cancel"). Cancelling frees the
+// unit for others; it is a conditional write on the status that was read, so a
+// concurrent owner decision wins or loses cleanly (409). Repeating the call on
+// a cancelled reservation is a no-op.
+reservationRoutes.delete("/v1/g/:garage/reservations/:id", async (c) => {
+  const garage = mustGarage(c);
+  const user = mustUser(c);
+  const id = c.req.param("id");
+  const existing = id ? await getReservation(garage.id, id) : undefined;
+  // Someone else's reservation answers like a missing one.
+  if (!existing || existing.borrower_phone !== user.phone) {
+    throw new ApiError("not_found", "Reservation not found");
+  }
+  const {
+    PK: _pk,
+    SK: _sk,
+    GSI1PK: _gpk,
+    GSI1SK: _gsk,
+    ...stored
+  } = existing as Reservation & Record<string, unknown>;
+  if (stored.status === "cancelled") return c.json({ reservation: stored });
+  if (stored.status !== "pending" && stored.status !== "approved") {
+    throw new ApiError("conflict", `Reservation is ${stored.status}`);
+  }
+  const cancelled: Reservation = { ...stored, status: "cancelled" };
+  if (!(await putReservationIfStatus(cancelled, stored.status))) {
+    throw new ApiError("conflict", "Reservation changed, reload and try again");
+  }
+  return c.json({ reservation: cancelled });
 });

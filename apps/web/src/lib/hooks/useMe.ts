@@ -1,22 +1,37 @@
 import { useQuery } from "@tanstack/react-query";
-import type { GarageMembership, User } from "@garageborrow/shared";
+import type { User } from "@garageborrow/shared";
 import { api } from "../api";
 
 export type MeProfile = {
   userId: string;
   displayName: string;
   phone: string;
-  tier: "howdy" | "friend" | "family" | "owner";
+  // Capabilities only: /v1/me does not reveal the member's tier label.
+  isOwner: boolean;
+  // Garages where the member's tier reaches that garage's AI minimum.
+  aiEligibleGarages: string[];
   onboardingSeen: boolean;
   ownedGarages: string[];
   celebrationPending: boolean;
 };
 
+// The member-facing membership view (no tier, notes or vouching details).
+export type MeMembership = {
+  garage_id: string;
+  joined_at: string;
+  borrows_total: number;
+  borrows_active: number;
+  returns_on_time: number;
+  returns_late: number;
+  celebration_pending: boolean;
+};
+
 type MeResponse = {
   user: User;
-  memberships?: GarageMembership[];
+  memberships?: MeMembership[];
   owned_garages?: string[];
-  tier?: "howdy" | "friend" | "family" | "owner";
+  is_owner?: boolean;
+  ai_eligible_garages?: string[];
   celebration_pending?: boolean;
 };
 
@@ -25,7 +40,8 @@ function mapMe(r: MeResponse): MeProfile {
     userId: r.user.phone,
     displayName: r.user.display_name,
     phone: r.user.phone,
-    tier: r.tier ?? "howdy",
+    isOwner: r.is_owner ?? (r.owned_garages ?? []).length > 0,
+    aiEligibleGarages: r.ai_eligible_garages ?? [],
     onboardingSeen: false,
     ownedGarages: r.owned_garages ?? [],
     celebrationPending: r.celebration_pending ?? false,

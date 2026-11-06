@@ -52,6 +52,9 @@ const PATHS: Record<string, Record<string, OpenApiPathItem>> = {
   "/v1/me/delete-request": {
     post: { summary: "Schedule account deletion", tags: ["me"] },
   },
+  "/v1/me/delete-request/cancel": {
+    post: { summary: "Cancel a pending account deletion", tags: ["me"] },
+  },
   "/v1/me/data-export": {
     get: { summary: "Download a JSON data export", tags: ["me"] },
   },
@@ -115,6 +118,9 @@ const PATHS: Record<string, Record<string, OpenApiPathItem>> = {
   },
   "/v1/g/{garage}/reservations": {
     post: { summary: "Create reservation", tags: ["reservations"] },
+  },
+  "/v1/g/{garage}/reservations/{id}": {
+    delete: { summary: "Cancel own reservation", tags: ["reservations"] },
   },
   "/v1/g/{garage}/waitlist/{id}": {
     delete: { summary: "Leave waitlist", tags: ["waitlist"] },

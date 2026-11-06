@@ -41,11 +41,11 @@ function wrap(child: ReactNode): JSX.Element {
 }
 
 describe("AdminGuard", () => {
-  it("renders children when /me reports owner tier", async () => {
+  it("renders children when /me reports is_owner", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         user: { phone: "+15555550000", display_name: "Owner" },
-        tier: "owner",
+        is_owner: true,
         owned_garages: ["demo-garage"],
         celebration_pending: false,
       }),
@@ -65,7 +65,7 @@ describe("AdminGuard", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         user: { phone: "+15555550100", display_name: "Family" },
-        tier: "family",
+        is_owner: false,
         owned_garages: [],
         celebration_pending: false,
       }),

@@ -2,16 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { User } from "@garageborrow/shared";
 
 import { api } from "../lib/api";
+import type { MeMembership } from "../lib/hooks/useMe";
 
 export type MeResponse = {
   user: User;
-  memberships?: Array<{
-    garage_id: string;
-    tier: "howdy" | "friend" | "family";
-    borrows_total: number;
-    returns_on_time: number;
-    borrows_active: number;
-  }>;
+  memberships?: MeMembership[];
 };
 
 export const PROFILE_QUERY_KEY = ["me", "profile"] as const;

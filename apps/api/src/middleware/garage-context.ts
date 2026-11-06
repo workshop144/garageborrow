@@ -1,13 +1,19 @@
 import type { Context, MiddlewareHandler, Next } from "hono";
 
 import { ApiError } from "../lib/errors.js";
-import { getGarage, getMembership } from "../lib/repo.js";
+import { getGarage, getMembership, getUser } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 
 // Loads the garage and the caller's membership for /v1/g/:garage routes.
 // 404 if garage doesn't exist; 403 if the caller is not a member (and not
 // the owner — owners are members by definition, but membership records may
-// lag behind, so we treat owner_phone as a member shortcut).
+// lag behind, so we treat owner_phone as a member shortcut). 403 too once a
+// member has asked for their account to be deleted: notifications to them are
+// already suppressed and the cleaner will erase them, so they may not borrow,
+// reserve or otherwise act in the garage meanwhile. The garage owner is exempt,
+// so a pending deletion never leaves a garage without a working admin (item
+// management and disputes run through here as well as /admin/*); they can
+// still cancel with POST /v1/me/delete-request/cancel like anyone else.
 export function loadGarageContext(): MiddlewareHandler<AppEnv> {
   return async (c: Context<AppEnv>, next: Next) => {
     const user = c.get("user");
@@ -18,6 +24,12 @@ export function loadGarageContext(): MiddlewareHandler<AppEnv> {
     if (!garage) throw new ApiError("not_found", "Garage not found");
     c.set("garage", garage);
     const isOwner = garage.owner_phone === user.phone;
+    if (!isOwner) {
+      const profile = await getUser(garageId, user.phone);
+      if (profile?.deleted_at) {
+        throw new ApiError("forbidden", "Account is scheduled for deletion");
+      }
+    }
     c.set("isOwner", isOwner);
     let membership = await getMembership(garageId, user.phone);
     if (!membership) {

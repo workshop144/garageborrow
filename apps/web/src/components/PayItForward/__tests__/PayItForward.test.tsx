@@ -41,7 +41,7 @@ function mockResponses(garageBody: { payforward_orgs: unknown[] } & Record<strin
           created_at: "2026-01-01T00:00:00Z",
           last_seen_at: "2026-04-26T15:00:00Z",
         },
-        tier: "family",
+        is_owner: false,
         owned_garages: [],
         memberships: [],
         celebration_pending: false,

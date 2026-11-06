@@ -155,6 +155,37 @@ export async function updateUserFields(
   }
 }
 
+// Removes attributes from an existing profile row (e.g. `deleted_at` when a
+// deletion request is cancelled). Returns false when the row is missing.
+export async function removeUserFields(
+  garage_id: string,
+  phone: string,
+  fields: string[],
+): Promise<boolean> {
+  if (fields.length === 0) return true;
+  const k = tenantUserKey(garage_id, phone);
+  const names: Record<string, string> = {};
+  const removes = fields.map((f, i) => {
+    names[`#r${i}`] = f;
+    return `#r${i}`;
+  });
+  try {
+    await ddb().send(
+      new UpdateCommand({
+        TableName: table(),
+        Key: { PK: k.pk, SK: k.sk },
+        UpdateExpression: `REMOVE ${removes.join(", ")}`,
+        ConditionExpression: "attribute_exists(PK)",
+        ExpressionAttributeNames: names,
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
+}
+
 export function isConditionFailure(err: unknown): boolean {
   return (err as { name?: string } | undefined)?.name === "ConditionalCheckFailedException";
 }
@@ -169,6 +200,21 @@ export async function listUserProfiles(phone: string): Promise<User[]> {
     ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": "USER#" },
   });
   return (r.Items ?? []) as User[];
+}
+
+// Rows indexed under this phone in GSI1 (byUser): "USER#" profiles, "LOAN#"
+// loans and "RES#" reservations, chosen by the GSI1SK prefix.
+export async function listUserIndexRows(
+  phone: string,
+  skPrefix: "USER#" | "LOAN#" | "RES#",
+): Promise<Record<string, unknown>[]> {
+  const r = await queryAll({
+    TableName: table(),
+    IndexName: "byUser",
+    KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": skPrefix },
+  });
+  return r.Items ?? [];
 }
 
 export async function getUserAnyGarage(phone: string): Promise<User | undefined> {
@@ -544,9 +590,23 @@ export async function getReservation(
 
 // Decline path: replaces a reservation only while it is still pending.
 export async function putReservationIfPending(r: Reservation): Promise<boolean> {
+  return putReservationIfStatus(r, "pending");
+}
+
+// Replaces a reservation only while its stored status is still `expected`.
+export async function putReservationIfStatus(
+  r: Reservation,
+  expected: Reservation["status"],
+): Promise<boolean> {
   try {
     await ddb().send(
-      new PutCommand({ TableName: table(), Item: reservationRow(r), ...STILL_PENDING }),
+      new PutCommand({
+        TableName: table(),
+        Item: reservationRow(r),
+        ConditionExpression: "#status = :expected",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":expected": expected },
+      }),
     );
     return true;
   } catch (err) {
@@ -584,6 +644,19 @@ export async function listWaitlist(garage_id: string, item_id: string): Promise<
     },
   });
   return (r.Items ?? []) as WaitlistEntry[];
+}
+
+// Every waitlist entry in a garage that belongs to this phone (any item).
+export async function listWaitlistForPhone(
+  garage_id: string,
+  phone: string,
+): Promise<WaitlistEntry[]> {
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `TENANT#${garage_id}`, ":sk": "WAIT#" },
+  });
+  return ((r.Items ?? []) as WaitlistEntry[]).filter((w) => w.borrower_phone === phone);
 }
 
 export async function deleteWaitlist(
@@ -909,6 +982,15 @@ export async function getNotification(
 export async function putPushSubscription(p: PushSubscription, hash: string): Promise<void> {
   const k = pushSubscriptionKey(p.user_phone, hash);
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, p) }));
+}
+
+export async function listPushSubscriptions(phone: string): Promise<PushSubscription[]> {
+  const r = await queryAll({
+    TableName: table(),
+    KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+    ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": "PUSH#" },
+  });
+  return (r.Items ?? []) as PushSubscription[];
 }
 
 // ─────────────────────────── Rate limit ───────────────────────

@@ -52,10 +52,15 @@ export default function Pegboard(): JSX.Element {
   const query = useGarageItems();
   const me = useMe();
   const garage = useGarageProfile();
-  // Family-only "Ask Dad's Garage" placeholder. Hidden once the owner flips
-  // ai_enabled — at that point this slot becomes the launcher for an actual
-  // chat input (deferred to v1.5).
-  const showAiCard = me.data?.tier === "family" && garage.data?.ai_enabled === false;
+  // AI "coming soon" placeholder for members whose tier reaches the garage's
+  // AI minimum (/v1/me ai_eligible_garages, checked against this garage).
+  // Hidden once the owner flips ai_enabled;
+  // at that point this slot becomes the launcher for an actual chat input
+  // (deferred to v1.5).
+  const showAiCard =
+    garage.data !== undefined &&
+    garage.data.ai_enabled === false &&
+    (me.data?.aiEligibleGarages ?? []).includes(garage.data.id);
   const items = useMemo(() => query.data ?? [], [query.data]);
 
   const { pull, refreshing } = usePullToRefresh({
