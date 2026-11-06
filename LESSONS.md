@@ -2,6 +2,7 @@
 
 One line per lesson, newest first.
 
+- 2026-11-06: pnpm 12 runs dependency install scripts only for packages in `allowBuilds` (pnpm-workspace.yaml); everything else is skipped, and the install fails with ERR_PNPM_IGNORED_BUILDS when a package needs its script. Rule: a new native dependency gets added to `allowBuilds` in the same PR (PR #38).
 - 2026-11-06: The repo had no STATE.md, so "is it deployed?" needed a trip through workflow runs (Deploy is always skipped). Rule: STATE.md records deploy status, and code PRs update it (CI `state-guard`).
 - 2026-11-01: Dependabot opened Tailwind 3 to 4 as a plain bump (PR #30); v4 changes the config model. Rule: framework majors with migration guides get closed and done as a planned change, not auto-merged.
 - 2026-09-29: Two borrowers could both take the last unit of an item. Rule: availability changes are one conditional DynamoDB transaction, and a closed garage is checked inside it (PR #20).
