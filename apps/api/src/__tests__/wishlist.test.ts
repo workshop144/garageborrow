@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { tenantUserKey } from "@garageborrow/shared";
 import type { Garage, WishlistRequest } from "@garageborrow/shared";
 
 import { createApp } from "../index.js";
@@ -15,6 +16,7 @@ import {
 } from "./_fixtures.js";
 import {
   authHeader,
+  deleteItem,
   installDdbMock,
   installFakeAuth,
   listAll,
@@ -408,6 +410,110 @@ describe("Wishlist phone privacy", () => {
   });
 });
 
+describe("Wishlist hides hidden and leaving members", () => {
+  type Row = { requester_phone: string | null; decided_by_phone?: string | null };
+  type Detail = {
+    request: Row;
+    voters: Array<{ phone: string | null; display_name: string | null }>;
+    requester_display_name: string | null;
+  };
+  const digits = (phone: string): string => phone.slice(-4);
+
+  async function detailAs(app: ReturnType<typeof createApp>, id: string, viewer: string) {
+    const res = await app.request(`/v1/g/${GARAGE_ID}/wishlist/${id}`, {
+      headers: authHeader(viewer),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    return { text, body: JSON.parse(text) as Detail };
+  }
+
+  it("a hidden voter shows no phone digits and no name to another member", async () => {
+    seedAll();
+    seedUser(FRIEND_PHONE, { display_name: "Fri", visibility: "hidden" });
+    const app = createApp();
+    const { id } = await createReq(app, FAMILY_PHONE);
+    await app.request(`/v1/g/${GARAGE_ID}/wishlist/${id}/vote`, {
+      method: "POST",
+      headers: authHeader(FRIEND_PHONE),
+    });
+
+    const { text, body } = await detailAs(app, id, HOWDY_PHONE);
+    expect(text).not.toContain(digits(FRIEND_PHONE));
+    expect(text).not.toContain("Fri");
+    expect(body.voters).toContainEqual({ phone: null, display_name: null });
+    expect(body.voters).toContainEqual({
+      phone: `***${digits(FAMILY_PHONE)}`,
+      display_name: "Fam",
+    });
+
+    // The owner and the voter themselves still see the full number.
+    expect((await detailAs(app, id, OWNER_PHONE)).text).toContain(FRIEND_PHONE);
+    const self = await detailAs(app, id, FRIEND_PHONE);
+    expect(self.body.voters).toContainEqual({ phone: FRIEND_PHONE, display_name: "Fri" });
+  });
+
+  it("a hidden requester shows no phone digits or name on list, detail or /me/wishlist", async () => {
+    seedAll();
+    seedUser(FAMILY_PHONE, { display_name: "Fam", visibility: "hidden" });
+    const app = createApp();
+    const { id } = await createReq(app, FAMILY_PHONE);
+    await app.request(`/v1/g/${GARAGE_ID}/wishlist/${id}/vote`, {
+      method: "POST",
+      headers: authHeader(HOWDY_PHONE),
+    });
+
+    const { text, body } = await detailAs(app, id, HOWDY_PHONE);
+    expect(text).not.toContain(digits(FAMILY_PHONE));
+    expect(text).not.toContain("Fam");
+    expect(body.request.requester_phone).toBeNull();
+    expect(body.requester_display_name).toBeNull();
+
+    for (const path of [`/v1/g/${GARAGE_ID}/wishlist`, `/v1/me/wishlist`]) {
+      const res = await app.request(path, { headers: authHeader(HOWDY_PHONE) });
+      expect(res.status).toBe(200);
+      const listText = await res.text();
+      expect(listText).not.toContain(digits(FAMILY_PHONE));
+      const items = (JSON.parse(listText) as { items: Row[] }).items;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.requester_phone).toBeNull();
+    }
+
+    const own = await detailAs(app, id, FAMILY_PHONE);
+    expect(own.body.request.requester_phone).toBe(FAMILY_PHONE);
+    expect(own.body.requester_display_name).toBe("Fam");
+  });
+
+  it("a soft-deleted requester shows no phone digits or name", async () => {
+    seedAll();
+    const app = createApp();
+    const { id } = await createReq(app, FAMILY_PHONE);
+    seedUser(FAMILY_PHONE, { display_name: "Fam", deleted_at: "2026-11-01T00:00:00Z" });
+
+    const { text, body } = await detailAs(app, id, HOWDY_PHONE);
+    expect(text).not.toContain(digits(FAMILY_PHONE));
+    expect(text).not.toContain("Fam");
+    expect(body.request.requester_phone).toBeNull();
+    expect(body.requester_display_name).toBeNull();
+    expect(body.voters).toEqual([{ phone: null, display_name: null }]);
+
+    const list = await app.request(`/v1/g/${GARAGE_ID}/wishlist`, {
+      headers: authHeader(HOWDY_PHONE),
+    });
+    expect(await list.text()).not.toContain(digits(FAMILY_PHONE));
+  });
+
+  it("a member with no profile in the garage shows no phone digits", async () => {
+    seedAll();
+    const app = createApp();
+    const { id } = await createReq(app, FAMILY_PHONE);
+    const k = tenantUserKey(GARAGE_ID, FAMILY_PHONE);
+    deleteItem(k.pk, k.sk);
+    const { text } = await detailAs(app, id, HOWDY_PHONE);
+    expect(text).not.toContain(digits(FAMILY_PHONE));
+  });
+});
+
 describe("wishlist votes under concurrency", () => {
   it("counts one vote per member when two vote requests race", async () => {
     seedAll();
@@ -471,5 +577,23 @@ describe("wishlist votes under concurrency", () => {
       body: JSON.stringify({ item_name: "Saw", photo_url: "x".repeat(5000) }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("rejects a photo_url with dot segments and accepts an upload key", async () => {
+    seedAll();
+    const app = createApp();
+    for (const [i, photo_url] of ["uploads/../x", "uploads/../../v1/g/x/admin.jpg"].entries()) {
+      const res = await app.request(`/v1/g/${GARAGE_ID}/wishlist`, {
+        method: "POST",
+        headers: {
+          ...authHeader(FAMILY_PHONE),
+          "content-type": "application/json",
+          "Idempotency-Key": `dots-${i}`,
+        },
+        body: JSON.stringify({ item_name: "Saw", photo_url }),
+      });
+      expect(res.status).toBe(400);
+    }
+    await createReq(app, FAMILY_PHONE, { item_name: "Saw", photo_url: "uploads/wishlist/abc.jpg" });
   });
 });

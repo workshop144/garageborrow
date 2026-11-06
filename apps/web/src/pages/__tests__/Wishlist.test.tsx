@@ -2,11 +2,12 @@ import type { JSX } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import Wishlist from "../Wishlist";
+import WishlistDetail from "../WishlistDetail";
 
 const fetchMock = vi.fn();
 
@@ -143,5 +144,65 @@ describe("Wishlist list page", () => {
     render(wrap(<Wishlist />));
     // The redirect leaves the page empty of the wishlist heading.
     await waitFor(() => expect(screen.queryByText("The Wishlist")).not.toBeInTheDocument());
+  });
+});
+
+describe("Wishlist photos and hidden members", () => {
+  it("renders only upload keys through photoUrl, never a dot-segment key", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith("/g/demo-garage")) return Promise.resolve(jsonResponse(GARAGE_RESPONSE));
+      if (url.includes("/wishlist?")) {
+        return Promise.resolve(
+          jsonResponse({
+            items: [
+              { ...SAMPLE_REQUESTS.items[0], photo_url: "uploads/../../v1/g/x/admin" },
+              { ...SAMPLE_REQUESTS.items[1], photo_url: "uploads/wishlist/abc.jpg" },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    const { container } = render(wrap(<Wishlist />));
+    await waitFor(() => expect(screen.getByText("Pressure washer")).toBeInTheDocument());
+    const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
+    expect(srcs).toEqual([expect.stringMatching(/\/img\/uploads\/wishlist\/abc\.jpg$/)]);
+    expect(container.innerHTML).not.toContain("..");
+  });
+
+  it("shows 'A neighbor' for a hidden requester and voter, with no phone digits", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes("/wishlist/wish_a")) {
+        return Promise.resolve(
+          jsonResponse({
+            request: {
+              ...SAMPLE_REQUESTS.items[0],
+              requester_phone: null,
+              photo_url: "uploads/../x",
+            },
+            voters: [
+              { phone: null, display_name: null },
+              { phone: "***0200", display_name: "Fri" },
+            ],
+            requester_display_name: null,
+          }),
+        );
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    const { container } = render(
+      wrap(
+        <Routes>
+          <Route path="/wishlist/:id" element={<WishlistDetail />} />
+        </Routes>,
+        ["/wishlist/wish_a"],
+      ),
+    );
+    await waitFor(() => expect(screen.getByText("Pressure washer")).toBeInTheDocument());
+    expect(screen.getByText(/From A neighbor/)).toBeInTheDocument();
+    expect(screen.getByText("A neighbor")).toBeInTheDocument();
+    expect(screen.getByText("Fri")).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/Member \d/);
+    expect(container.querySelector("img")).toBeNull();
   });
 });

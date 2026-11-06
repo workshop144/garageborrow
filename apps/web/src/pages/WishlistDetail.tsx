@@ -6,6 +6,7 @@ import type { WishlistRow } from "../hooks/useWishlist";
 import { useWishlistRequest } from "../hooks/useWishlistRequest";
 import { useWishlistVote } from "../hooks/useWishlistVote";
 import { formatRelative } from "../lib/dates";
+import { photoUrl } from "../lib/photoUrl";
 import { safeHref } from "../lib/safeHref";
 
 export default function WishlistDetail(): JSX.Element {
@@ -38,8 +39,7 @@ export default function WishlistDetail(): JSX.Element {
 
   const r = detail.data.request;
   const voters = detail.data.voters;
-  const requesterName =
-    detail.data.requester_display_name ?? `Member ${r.requester_phone.slice(-4)}`;
+  const requesterName = detail.data.requester_display_name ?? "A neighbor";
 
   const isOpen = r.status === "open";
 
@@ -91,9 +91,9 @@ export default function WishlistDetail(): JSX.Element {
         </p>
       ) : null}
 
-      {r.photo_url ? (
+      {photoUrl(r.photo_url) ? (
         <img
-          src={`/img/${r.photo_url}`}
+          src={photoUrl(r.photo_url)}
           alt=""
           className="mb-4 max-h-72 w-full rounded-xl object-cover"
         />
@@ -126,8 +126,8 @@ export default function WishlistDetail(): JSX.Element {
         </h2>
         <ul className="space-y-1 text-sm">
           {voters.map((v, i) => (
-            <li key={`${i}-${v.phone}`} className="opacity-80">
-              {v.display_name ?? `Member ${v.phone.slice(-4)}`}
+            <li key={i} className="opacity-80">
+              {v.display_name ?? "A neighbor"}
             </li>
           ))}
         </ul>

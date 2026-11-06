@@ -8,6 +8,7 @@ import { useWishlist, type WishlistFilter, type WishlistRow } from "../hooks/use
 import { useWishlistVote } from "../hooks/useWishlistVote";
 import { useGarageProfile } from "../hooks/useGarageProfile";
 import { formatRelative } from "../lib/dates";
+import { photoUrl } from "../lib/photoUrl";
 
 const HERO =
   "Looking for something we don't have? Add it. Vote on what others want. Dad keeps an eye on the list.";
@@ -131,9 +132,9 @@ export default function Wishlist(): JSX.Element {
                   <span className="text-xs font-semibold tabular-nums">{r.vote_count}</span>
                 </button>
               </div>
-              {r.photo_url ? (
+              {photoUrl(r.photo_url) ? (
                 <img
-                  src={`/img/${r.photo_url}`}
+                  src={photoUrl(r.photo_url)}
                   alt=""
                   className="mt-3 h-20 w-20 rounded-lg object-cover"
                 />
