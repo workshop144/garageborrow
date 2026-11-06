@@ -3,12 +3,11 @@ import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import type { GarageItem } from "../../hooks/useGarageItems";
 import { StatusPill } from "./StatusPill";
+import { photoUrl } from "../../lib/photoUrl";
 
 type Props = {
   item: GarageItem;
 };
-
-const PHOTO_BASE = import.meta.env.VITE_API_BASE_URL?.replace(/\/v1\/?$/, "") ?? "";
 
 function rotationFor(id: string): number {
   let h = 0;
@@ -16,12 +15,6 @@ function rotationFor(id: string): number {
   // Map to [-2, 2] degrees.
   const norm = ((h % 1000) + 1000) % 1000;
   return (norm / 1000) * 4 - 2;
-}
-
-function photoUrl(key: string): string {
-  if (!key) return "";
-  if (key.startsWith("http")) return key;
-  return `${PHOTO_BASE}/img/${key}`;
 }
 
 export function ToolCard({ item }: Props): JSX.Element {

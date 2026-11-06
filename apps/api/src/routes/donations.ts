@@ -8,6 +8,7 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
+import { PhotoKey } from "../lib/photo-key.js";
 import {
   bumpWindowCounter,
   decideDonation,
@@ -31,7 +32,7 @@ donationRoutes.use("/v1/g/:garage/donations/*", requireAuth(), loadGarageContext
 const DonationCreateSchema = z.object({
   item_name: z.string().min(1).max(120),
   description: z.string().max(2000),
-  photo_keys: z.array(z.string().min(1).max(300)).max(10).default([]),
+  photo_keys: z.array(PhotoKey).max(10).default([]),
   condition: DonationConditionSchema,
   donor_notes: z.string().max(1000).optional(),
   suggested_category: z.string().max(60).optional(),
@@ -107,7 +108,7 @@ const DecideSchema = z.discriminatedUnion("decision", [
     item_overrides: z
       .object({
         category: z.string().min(1).optional(),
-        primary_photo_key: z.string().min(1).optional(),
+        primary_photo_key: PhotoKey.optional(),
         handling_notes: z.string().optional(),
         min_tier: z.enum(["howdy", "friend", "family"]).optional(),
         auto_approve_tier: z.enum(["howdy", "friend", "family"]).optional(),

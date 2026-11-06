@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { formatDateInput } from "../../lib/dates";
 import { useCancelReservation } from "../../hooks/useMyStuff";
 import type { MyReservation } from "../../hooks/useMyStuff";
+import { photoUrl } from "../../lib/photoUrl";
 
 type Props = {
   reservation: MyReservation;
@@ -30,9 +31,9 @@ export function ReservationCard({ reservation }: Props): JSX.Element {
           aria-hidden="true"
           className="h-14 w-14 flex-none overflow-hidden rounded-xl bg-workshop/10 dark:bg-surface-light/10"
         >
-          {reservation.item.primary_photo_key ? (
+          {photoUrl(reservation.item.primary_photo_key) ? (
             <img
-              src={reservation.item.primary_photo_key}
+              src={photoUrl(reservation.item.primary_photo_key)}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"

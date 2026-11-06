@@ -9,6 +9,7 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
+import { PhotoKey } from "../lib/photo-key.js";
 import {
   getItem,
   listAllInstancesInGarage,
@@ -372,7 +373,7 @@ const IncidentCreateSchema = z.object({
   loan_id: z.string().min(1),
   type: z.enum(["damage", "loss", "malfunction"]),
   description: z.string().min(1),
-  photo_keys: z.array(z.string().min(1)).default([]),
+  photo_keys: z.array(PhotoKey).max(10).default([]),
   suggested_action: z.string().optional(),
 });
 

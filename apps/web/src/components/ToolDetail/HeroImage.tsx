@@ -1,13 +1,6 @@
 import type { JSX } from "react";
 import { motion } from "framer-motion";
-
-const PHOTO_BASE = import.meta.env.VITE_API_BASE_URL?.replace(/\/v1\/?$/, "") ?? "";
-
-function photoUrl(key: string): string {
-  if (!key) return "";
-  if (key.startsWith("http")) return key;
-  return `${PHOTO_BASE}/img/${key}`;
-}
+import { photoUrl } from "../../lib/photoUrl";
 
 type Props = {
   itemId: string;

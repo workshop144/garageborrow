@@ -26,6 +26,7 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
+import { PhotoKey } from "../lib/photo-key.js";
 import {
   deleteInvite,
   getIncident,
@@ -543,7 +544,8 @@ const BulkItemRowSchema = z
     name: z.string().min(1),
     category: z.string().min(1),
     description: z.string().optional(),
-    primary_photo_key: z.string().optional(),
+    // CSV cells come through as "" when empty.
+    primary_photo_key: PhotoKey.or(z.literal("")).optional(),
     handling_notes: z.string().optional(),
     default_duration_days: z.coerce.number().int().positive().optional(),
     requires_approval: z.coerce.boolean().optional(),

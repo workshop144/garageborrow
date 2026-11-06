@@ -6,6 +6,7 @@ import { ExtensionDrawer } from "../Drawers/ExtensionDrawer";
 import { formatRelative } from "../../lib/dates";
 import { useReturnLoan } from "../../hooks/useMyStuff";
 import type { MyLoan } from "../../hooks/useMyStuff";
+import { photoUrl } from "../../lib/photoUrl";
 
 type Props = {
   loan: MyLoan;
@@ -26,9 +27,9 @@ export function LoanCard({ loan }: Props): JSX.Element {
           aria-hidden="true"
           className="h-16 w-16 flex-none overflow-hidden rounded-xl bg-workshop/10 dark:bg-surface-light/10"
         >
-          {loan.item.primary_photo_key ? (
+          {photoUrl(loan.item.primary_photo_key) ? (
             <img
-              src={loan.item.primary_photo_key}
+              src={photoUrl(loan.item.primary_photo_key)}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"
