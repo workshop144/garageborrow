@@ -1,0 +1,118 @@
+name: gitleaks
+
+# Reusable secret scan. Runs the gitleaks CLI (pinned version + sha256) over the
+# full git history of the calling repository and fails on any finding.
+#
+# Caller example:
+#
+#   jobs:
+#     scan-secrets:
+#       permissions:
+#         contents: read
+#       uses: workshop144/garageborrow/.github/workflows/gitleaks.yml@<commit-sha>
+#       with:
+#         runs-on: '["self-hosted", "linux", "x64", "my-repo"]'
+#
+# gitleaks-action needs a paid license for organization repos, so this calls
+# the CLI directly. It installs into a temp dir on PATH (no sudo), so it also
+# works on self-hosted runners without root.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: 'Runner labels as a JSON string, e.g. ''["self-hosted", "linux", "x64", "repo"]''.'
+        type: string
+        default: '["ubuntu-latest"]'
+      config:
+        description: Path to a gitleaks config in the repo. Skipped (built-in rules only) if the file does not exist.
+        type: string
+        default: .gitleaks.toml
+      gitleaks-version:
+        description: gitleaks release to install (without the leading v).
+        type: string
+        default: 8.30.1
+      gitleaks-sha256:
+        description: sha256 of gitleaks_<version>_linux_x64.tar.gz. Must change together with gitleaks-version.
+        type: string
+        default: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+      gitleaks-sha256-arm64:
+        description: sha256 of gitleaks_<version>_linux_arm64.tar.gz. Required on ARM64 runners; empty means ARM64 is refused.
+        type: string
+        # TODO(owner): fill in the linux_arm64 sha256 for 8.30.1 from the
+        # release's gitleaks_8.30.1_checksums.txt. It could not be read from a
+        # package registry when this was written, and a checksum is never guessed.
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        # Inputs reach the script only through env (never interpolated into
+        # the script text) and are format-checked before use.
+        env:
+          GITLEAKS_VERSION: ${{ inputs.gitleaks-version }}
+          GITLEAKS_SHA256_X64: ${{ inputs.gitleaks-sha256 }}
+          GITLEAKS_SHA256_ARM64: ${{ inputs.gitleaks-sha256-arm64 }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS}" != "Linux" ]]; then
+            echo "::error::gitleaks workflow supports Linux runners only (got ${RUNNER_OS})."
+            exit 1
+          fi
+          case "${RUNNER_ARCH}" in
+            X64)   arch=x64;   sha="${GITLEAKS_SHA256_X64}";   input=gitleaks-sha256 ;;
+            ARM64) arch=arm64; sha="${GITLEAKS_SHA256_ARM64}"; input=gitleaks-sha256-arm64 ;;
+            *)
+              echo "::error::Unsupported runner architecture: ${RUNNER_ARCH} (need X64 or ARM64)."
+              exit 1
+              ;;
+          esac
+          if [[ ! "${GITLEAKS_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::gitleaks-version must look like 1.2.3 (got '${GITLEAKS_VERSION}')."
+            exit 1
+          fi
+          if [[ ! "${sha}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::No valid sha256 for linux_${arch} (set the ${input} input to 64 lowercase hex chars)."
+            exit 1
+          fi
+          dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/gitleaks.XXXXXX")"
+          tarball="${dir}/gitleaks.tar.gz"
+          curl -sSfL --retry 3 -o "${tarball}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${arch}.tar.gz"
+          echo "${sha}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}" -C "${dir}" gitleaks
+          rm -f "${tarball}"
+          chmod 0755 "${dir}/gitleaks"
+          echo "${dir}" >> "${GITHUB_PATH}"
+          "${dir}/gitleaks" version
+
+      - name: Scan for secrets
+        env:
+          GITLEAKS_CONFIG_PATH: ${{ inputs.config }}
+        run: |
+          set -euo pipefail
+          # Scan the full history reachable from the checked-out commit (for a
+          # PR: the merge commit, so base + PR head). gitleaks' default is
+          # `git log --all`, and fetch-depth: 0 fetches every branch, so one
+          # leaky branch (e.g. a leak drill) would turn every PR red.
+          args=(git --no-banner --redact --exit-code 1 "--log-opts=--full-history HEAD")
+          if [[ -n "${GITLEAKS_CONFIG_PATH}" && -f "${GITLEAKS_CONFIG_PATH}" ]]; then
+            args+=(--config "${GITLEAKS_CONFIG_PATH}")
+          else
+            echo "::notice::gitleaks config '${GITLEAKS_CONFIG_PATH}' not found; using built-in rules."
+          fi
+          gitleaks "${args[@]}" .
