@@ -137,8 +137,21 @@ async function streamToBuffer(stream: Readable | undefined): Promise<Buffer | un
   return Buffer.concat(chunks);
 }
 
+// Errors that a retry cannot fix: the object is gone, or it is not an image
+// sharp can read. Everything else (S3 throttling or timeouts, memory) is
+// transient and is rethrown so Lambda's async retry runs the event again.
+export function isPermanentResizeError(err: unknown): boolean {
+  const e = err as { name?: string; Code?: string; message?: string } | undefined;
+  if (e?.name === "NoSuchKey" || e?.Code === "NoSuchKey") return true;
+  const msg = e?.message ?? "";
+  return /unsupported image format|corrupt|Input buffer|Input file|bad seek|VipsJpeg|pngload|webpload|heifload/i.test(
+    msg,
+  );
+}
+
 export async function handler(event: S3Event): Promise<{ processed: number }> {
   let processed = 0;
+  let transient: unknown;
   for (const rec of event.Records ?? []) {
     const bucket = rec.s3?.bucket?.name;
     const key = rec.s3?.object?.key;
@@ -147,9 +160,18 @@ export async function handler(event: S3Event): Promise<{ processed: number }> {
       const result = await resizeOne(bucket, key);
       if (result) processed++;
     } catch (err) {
-      logger.warn({ err, key }, "resizer_failed");
       captureError(err, { bucket, key });
+      if (isPermanentResizeError(err)) {
+        logger.warn({ err, key }, "resizer_failed_permanent");
+      } else {
+        logger.error({ err, key }, "resizer_failed_will_retry");
+        transient ??= err;
+      }
     }
   }
+  // Finish the other records first, then fail the invocation so the async
+  // retry (and its failure destination) handles the transient one. Re-running
+  // a record that already succeeded only rewrites the same variants.
+  if (transient) throw transient;
   return { processed };
 }

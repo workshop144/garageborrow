@@ -3,7 +3,7 @@ import { mockClient } from "aws-sdk-client-mock";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isResizedKey, resizeOne, setSharpForTest } from "../image-resizer.js";
+import { handler, isResizedKey, resizeOne, setSharpForTest } from "../image-resizer.js";
 
 const s3Mock = mockClient(S3Client);
 
@@ -66,5 +66,30 @@ describe("resizeOne", () => {
     expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(2);
     // Both variants come from sharp() — once per resize invocation.
     expect(sharpStub).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("handler retries", () => {
+  const event = (key: string) => ({
+    Records: [{ s3: { bucket: { name: "bucket" }, object: { key } } }],
+  });
+
+  it("rethrows a transient S3 failure so Lambda retries the event", async () => {
+    const throttled = Object.assign(new Error("Slow Down"), { name: "SlowDown" });
+    s3Mock.on(GetObjectCommand).rejects(throttled);
+    await expect(handler(event("uploads/item/a.jpg") as never)).rejects.toThrow("Slow Down");
+  });
+
+  it("swallows a permanent failure (object gone, not an image)", async () => {
+    s3Mock.on(GetObjectCommand).rejects(Object.assign(new Error("gone"), { name: "NoSuchKey" }));
+    await expect(handler(event("uploads/item/a.jpg") as never)).resolves.toEqual({ processed: 0 });
+
+    s3Mock.on(GetObjectCommand).resolves({
+      Body: streamFromBuffer(Buffer.from([1])) as unknown as never,
+    });
+    setSharpForTest((() => {
+      throw new Error("Input buffer contains unsupported image format");
+    }) as never);
+    await expect(handler(event("uploads/item/b.jpg") as never)).resolves.toEqual({ processed: 0 });
   });
 });
