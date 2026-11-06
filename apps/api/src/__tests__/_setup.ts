@@ -37,6 +37,7 @@ function keyOf(it: { PK: string; SK: string }): string {
 export function resetDdbStore(): void {
   store.items.clear();
   queryPageSize = Infinity;
+  scanPageSize = Infinity;
   afterNextScan = undefined;
   beforeNextTransact = undefined;
 }
@@ -161,6 +162,12 @@ function checkCondition(
 let queryPageSize = Infinity;
 export function setQueryPageSize(n: number): void {
   queryPageSize = n;
+}
+
+// Rows per Scan page, counted before the filter (as DynamoDB's 1 MB page is).
+let scanPageSize = Infinity;
+export function setScanPageSize(n: number): void {
+  scanPageSize = n;
 }
 
 // Runs once, right after the next Scan computes its result: lets a test make a
@@ -319,13 +326,21 @@ export function installDdbMock(): void {
   mock.on(ScanCommand).callsFake((input) => {
     const values = input.ExpressionAttributeValues ?? {};
     const all = Array.from(store.items.values());
-    const filtered = all.filter((it) =>
+    const startKey = input.ExclusiveStartKey as { PK: string; SK: string } | undefined;
+    const from = startKey ? all.findIndex((it) => keyOf(it) === keyOf(startKey)) + 1 : 0;
+    const page = all.slice(from, from + scanPageSize);
+    const last = page[page.length - 1];
+    const more = from + page.length < all.length && last !== undefined;
+    const filtered = page.filter((it) =>
       evalFilter(it, input.FilterExpression ?? undefined, values),
     );
     const hook = afterNextScan;
     afterNextScan = undefined;
     hook?.();
-    return Promise.resolve({ Items: filtered });
+    return Promise.resolve({
+      Items: filtered,
+      ...(more ? { LastEvaluatedKey: { PK: last.PK, SK: last.SK } } : {}),
+    });
   });
 
   mock.on(BatchWriteCommand).callsFake((input) => {

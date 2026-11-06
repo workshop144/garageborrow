@@ -475,20 +475,27 @@ async function dispatchLoanReminder(
   });
 }
 
+// Scan pages hold at most 1 MB before the filter, and the table is mostly
+// loans, audit and notification rows, so follow LastEvaluatedKey to the end.
 async function listAllGarageIds(): Promise<string[]> {
-  const r = await ddb().send(
-    new ScanCommand({
-      TableName: env.tableName(),
-      FilterExpression: "SK = :meta",
-      ExpressionAttributeValues: { ":meta": "META" },
-      ProjectionExpression: "PK",
-    }),
-  );
   const ids: string[] = [];
-  for (const it of r.Items ?? []) {
-    const pk = (it as { PK?: string }).PK;
-    if (pk && pk.startsWith("TENANT#")) ids.push(pk.slice("TENANT#".length));
-  }
+  let start: Record<string, unknown> | undefined;
+  do {
+    const r = await ddb().send(
+      new ScanCommand({
+        TableName: env.tableName(),
+        FilterExpression: "SK = :meta",
+        ExpressionAttributeValues: { ":meta": "META" },
+        ProjectionExpression: "PK",
+        ...(start ? { ExclusiveStartKey: start } : {}),
+      }),
+    );
+    for (const it of r.Items ?? []) {
+      const pk = (it as { PK?: string }).PK;
+      if (pk && pk.startsWith("TENANT#")) ids.push(pk.slice("TENANT#".length));
+    }
+    start = r.LastEvaluatedKey;
+  } while (start);
   return ids;
 }
 
