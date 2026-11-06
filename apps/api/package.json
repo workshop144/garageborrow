@@ -12,17 +12,17 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@aws-sdk/client-cognito-identity-provider": "^3.1160.0",
-    "@aws-sdk/client-dynamodb": "^3.1160.0",
-    "@aws-sdk/client-lambda": "^3.1160.0",
-    "@aws-sdk/client-s3": "^3.1160.0",
-    "@aws-sdk/client-sns": "^3.1160.0",
-    "@aws-sdk/lib-dynamodb": "^3.1160.0",
-    "@aws-sdk/s3-request-presigner": "^3.1160.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.1161.0",
+    "@aws-sdk/client-dynamodb": "^3.1161.0",
+    "@aws-sdk/client-lambda": "^3.1161.0",
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@aws-sdk/client-sns": "^3.1161.0",
+    "@aws-sdk/lib-dynamodb": "^3.1161.0",
+    "@aws-sdk/s3-request-presigner": "^3.1161.0",
     "@garageborrow/shared": "workspace:*",
     "@sentry/aws-serverless": "^11.10.0",
-    "hono": "^4.13.14",
-    "jose": "^6.2.14",
+    "hono": "^4.13.16",
+    "jose": "^6.2.15",
     "pino": "^10.4.0",
     "sharp": "^0.35.5",
     "ulid": "^3.0.2",
@@ -33,9 +33,9 @@
     "@types/aws-lambda": "^8.10.164",
     "@types/node": "^26.6.6",
     "@types/web-push": "^3.6.4",
-    "aws-sdk-client-mock": "^4.0.2",
+    "aws-sdk-client-mock": "^4.1.0",
     "esbuild": "^0.28.2",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }

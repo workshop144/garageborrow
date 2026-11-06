@@ -1,3 +1,16 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# Matches the Dependabot cooldown (ADR-089): a release must be 3 days old before
+# pnpm resolves it. Minutes.
+minimumReleaseAge: 4320
+
+# pnpm 10+ runs no dependency lifecycle scripts unless listed here.
+allowBuilds:
+  esbuild: true
+
+peerDependencyRules:
+  allowedVersions:
+    # eslint-plugin-react 7.37.x declares eslint <=9 but works on 10.
+    eslint-plugin-react>eslint: "10"
