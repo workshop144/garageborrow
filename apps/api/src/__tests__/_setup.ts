@@ -40,6 +40,7 @@ export function resetDdbStore(): void {
   scanPageSize = Infinity;
   afterNextScan = undefined;
   beforeNextTransact = undefined;
+  failPut = undefined;
 }
 
 export function seedItem(it: Item): void {
@@ -127,8 +128,41 @@ function deepEqual(a: unknown, b: unknown): boolean {
   );
 }
 
-// ConditionExpression subset: AND-joined attribute_exists / attribute_not_exists /
-// "#name = :v" / "name = :v". A failed check throws like DynamoDB does.
+// ConditionExpression subset: OR of AND-joined clauses (no parentheses), each
+// attribute_exists / attribute_not_exists / "#name = :v" / "name <= :v" /
+// "name < :v". A failed check throws like DynamoDB does.
+function conditionHolds(
+  cur: Item | undefined,
+  expr: string,
+  values: Record<string, unknown>,
+  names: Record<string, string>,
+): boolean {
+  if (/\s+OR\s+/i.test(expr)) {
+    return expr.split(/\s+OR\s+/i).some((p) => conditionHolds(cur, p, values, names));
+  }
+  for (const raw of expr.split(/\s+AND\s+/i)) {
+    const p = raw.trim();
+    let ok: boolean;
+    const ex = /^attribute_(not_)?exists\((#?\w+)\)$/.exec(p);
+    const eq = /^(#?\w+)\s*=\s*(:\w+)$/.exec(p);
+    const lt = /^(#?\w+)\s*(<=?)\s*(:\w+)$/.exec(p);
+    if (ex && ex[2]) {
+      const has = cur !== undefined && cur[names[ex[2]] ?? ex[2]] !== undefined;
+      ok = ex[1] ? !has : has;
+    } else if (eq && eq[1] && eq[2]) {
+      ok = cur !== undefined && deepEqual(cur[names[eq[1]] ?? eq[1]], values[eq[2]]);
+    } else if (lt && lt[1] && lt[2] && lt[3]) {
+      const a = cur?.[names[lt[1]] ?? lt[1]] as number | string | undefined;
+      const b = values[lt[3]] as number | string;
+      ok = a !== undefined && (lt[2] === "<=" ? a <= b : a < b);
+    } else {
+      throw new Error(`mock: unsupported condition ${p}`);
+    }
+    if (!ok) return false;
+  }
+  return true;
+}
+
 function checkCondition(
   cur: Item | undefined,
   expr: string | undefined,
@@ -136,24 +170,10 @@ function checkCondition(
   names: Record<string, string>,
 ): void {
   if (!expr) return;
-  for (const raw of expr.split(/\s+AND\s+/i)) {
-    const p = raw.trim();
-    let ok: boolean;
-    const ex = /^attribute_(not_)?exists\((#?\w+)\)$/.exec(p);
-    const eq = /^(#?\w+)\s*=\s*(:\w+)$/.exec(p);
-    if (ex && ex[2]) {
-      const has = cur !== undefined && cur[names[ex[2]] ?? ex[2]] !== undefined;
-      ok = ex[1] ? !has : has;
-    } else if (eq && eq[1] && eq[2]) {
-      ok = cur !== undefined && deepEqual(cur[names[eq[1]] ?? eq[1]], values[eq[2]]);
-    } else {
-      throw new Error(`mock: unsupported condition ${p}`);
-    }
-    if (!ok) {
-      const err = new Error("The conditional request failed");
-      err.name = "ConditionalCheckFailedException";
-      throw err;
-    }
+  if (!conditionHolds(cur, expr, values, names)) {
+    const err = new Error("The conditional request failed");
+    err.name = "ConditionalCheckFailedException";
+    throw err;
   }
 }
 
@@ -175,6 +195,12 @@ export function setScanPageSize(n: number): void {
 let afterNextScan: (() => void) | undefined;
 export function onNextScan(fn: () => void): void {
   afterNextScan = fn;
+}
+
+// Throws a throttling error, once, for the first Put whose item matches.
+let failPut: ((item: Item) => boolean) | undefined;
+export function failNextPut(match: (item: Item) => boolean): void {
+  failPut = match;
 }
 
 // Runs once, right before the next TransactWrite checks its conditions: lets a
@@ -253,6 +279,12 @@ export function installDdbMock(): void {
 
   mock.on(PutCommand).callsFake((input) => {
     const item = input.Item as Item;
+    if (failPut?.(item)) {
+      failPut = undefined;
+      const err = new Error("Rate exceeded");
+      err.name = "ThrottlingException";
+      throw err;
+    }
     checkCondition(
       store.items.get(keyOf(item)),
       input.ConditionExpression,

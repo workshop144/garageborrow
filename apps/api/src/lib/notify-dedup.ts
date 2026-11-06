@@ -5,10 +5,11 @@
 
 import { createHash } from "node:crypto";
 
-import { GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 import { ddb } from "./ddb.js";
 import { env } from "./env.js";
+import { isConditionFailure } from "./repo.js";
 
 const DEDUP_WINDOW_SECONDS = 3600;
 
@@ -61,4 +62,43 @@ export async function markDispatched(
       },
     }),
   );
+}
+
+// Atomically takes the dedup slot for this (user, type, payload) before any
+// delivery: a conditional write that succeeds only when no unexpired marker
+// exists. Two concurrent or retried invocations cannot both win, so a retry
+// after a mid-delivery failure skips rather than sending the SMS twice.
+// Returns false when another dispatch already holds the slot.
+export async function claimDispatch(
+  userPhone: string,
+  type: string,
+  payload: Record<string, unknown>,
+  nowEpochSec: number,
+): Promise<boolean> {
+  const k = dedupKey(userPhone, type, payloadHash(payload));
+  try {
+    await ddb().send(
+      new PutCommand({
+        TableName: env.tableName(),
+        Item: { PK: k.pk, SK: k.sk, expires_at: nowEpochSec + DEDUP_WINDOW_SECONDS },
+        ConditionExpression: "attribute_not_exists(PK) OR expires_at <= :now",
+        ExpressionAttributeValues: { ":now": nowEpochSec },
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
+}
+
+// Gives the slot back when a dispatch failed before anything went out, so
+// the retry can deliver.
+export async function releaseDispatch(
+  userPhone: string,
+  type: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const k = dedupKey(userPhone, type, payloadHash(payload));
+  await ddb().send(new DeleteCommand({ TableName: env.tableName(), Key: { PK: k.pk, SK: k.sk } }));
 }
