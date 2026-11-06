@@ -217,6 +217,10 @@ const COPY: Record<string, { title: string; body: string }> = {
     title: "Final notice",
     body: "Your account will be permanently deleted in 7 days. Reply STOP to keep it.",
   },
+  borrow_request_pending: {
+    title: "Someone wants to borrow something",
+    body: "A member asked to borrow or reserve a tool. Open the app to approve or decline.",
+  },
   borrow_request_decided: {
     title: "Borrow request update",
     body: "Owner just decided on your borrow request — open the app to see.",

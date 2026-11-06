@@ -82,8 +82,15 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
       end_at: expectedReturnAt,
       status: "pending" as const,
       approval_required: true,
+      source: "borrow" as const,
     };
     await putReservation(reservation);
+    await invokeNotifier({
+      type: "borrow_request_pending",
+      garage_id: garage.id,
+      user_phone: garage.owner_phone,
+      payload: { reservation_id: reservation.id, item_id: item.id, kind: "borrow" },
+    });
     return c.json(
       {
         reservation,

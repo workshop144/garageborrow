@@ -30,6 +30,7 @@ export type NotifierEventType =
   | "incident_logged"
   | "hard_delete_warning"
   | "borrow_request_decided"
+  | "borrow_request_pending"
   | "wishlist_popular"
   | "wishlist_acquired"
   | "wishlist_declined"

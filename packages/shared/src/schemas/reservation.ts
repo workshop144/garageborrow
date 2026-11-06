@@ -17,6 +17,8 @@ export const ReservationSchema = z.object({
   decided_by_phone: PhoneE164.optional(),
   decided_at: IsoDateTime.optional(),
   decline_reason: z.string().optional(),
+  // "borrow" when a borrow needing approval became this pending request.
+  source: z.enum(["borrow", "reserve"]).optional(),
 });
 
 export type Reservation = z.infer<typeof ReservationSchema>;

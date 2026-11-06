@@ -441,6 +441,19 @@ export async function getItemLockVersion(garage_id: string, item_id: string): Pr
   return ((r.Item as { version?: number } | undefined)?.version ?? 0) as number;
 }
 
+export interface RowCondition {
+  ConditionExpression: string;
+  ExpressionAttributeNames?: Record<string, string>;
+  ExpressionAttributeValues?: Record<string, unknown>;
+}
+
+// A pending reservation, written only while it is still pending.
+export const STILL_PENDING: RowCondition = {
+  ConditionExpression: "#status = :pending",
+  ExpressionAttributeNames: { "#status": "status" },
+  ExpressionAttributeValues: { ":pending": "pending" },
+};
+
 // Writes `row` and bumps the item's lock from `seenVersion`. Returns false when
 // another commitment for this item landed since the version was read.
 export async function commitWithItemLock(
@@ -448,6 +461,8 @@ export async function commitWithItemLock(
   item_id: string,
   seenVersion: number,
   row: Record<string, unknown> & { PK: string; SK: string },
+  // Condition on the row write; the default insists the row is new.
+  rowCondition: RowCondition = { ConditionExpression: "attribute_not_exists(PK)" },
 ): Promise<boolean> {
   const lock = itemLockKey(garage_id, item_id);
   try {
@@ -470,7 +485,7 @@ export async function commitWithItemLock(
             Put: {
               TableName: table(),
               Item: row,
-              ConditionExpression: "attribute_not_exists(PK)",
+              ...rowCondition,
             },
           },
         ],
@@ -516,6 +531,26 @@ export async function replaceLoanWithItemLock(
     return true;
   } catch (err) {
     if ((err as { name?: string }).name === "TransactionCanceledException") return false;
+    throw err;
+  }
+}
+
+export async function getReservation(
+  garage_id: string,
+  reservation_id: string,
+): Promise<Reservation | undefined> {
+  return (await listReservationsByGarage(garage_id)).find((r) => r.id === reservation_id);
+}
+
+// Decline path: replaces a reservation only while it is still pending.
+export async function putReservationIfPending(r: Reservation): Promise<boolean> {
+  try {
+    await ddb().send(
+      new PutCommand({ TableName: table(), Item: reservationRow(r), ...STILL_PENDING }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
     throw err;
   }
 }

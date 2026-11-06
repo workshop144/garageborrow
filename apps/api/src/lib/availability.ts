@@ -15,6 +15,7 @@ import {
   listReservationsByGarage,
   type LoanRecord,
   replaceLoanWithItemLock,
+  type RowCondition,
 } from "./repo.js";
 
 // Owner-set item states that still accept borrows. all_loaned, broken,
@@ -173,12 +174,21 @@ export async function commitAvailable<T>(
   check: Omit<AvailabilityCheck, "commits">,
   build: (instanceId: string | undefined) => T,
   toRow: (value: T) => Record<string, unknown> & { PK: string; SK: string },
+  rowCondition?: RowCondition,
 ): Promise<T> {
   for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
     const seen = await getItemLockVersion(check.item.garage_id, check.item.id);
     const instanceId = await assertAvailable({ ...check, commits: true });
     const value = build(instanceId);
-    if (await commitWithItemLock(check.item.garage_id, check.item.id, seen, toRow(value))) {
+    if (
+      await commitWithItemLock(
+        check.item.garage_id,
+        check.item.id,
+        seen,
+        toRow(value),
+        rowCondition,
+      )
+    ) {
       return value;
     }
   }
