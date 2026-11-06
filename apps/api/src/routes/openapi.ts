@@ -137,6 +137,15 @@ const PATHS: Record<string, Record<string, OpenApiPathItem>> = {
   "/v1/g/{garage}/admin/donations/{id}/decide": {
     post: { summary: "Decide on a donation offer (owner only)", tags: ["admin"] },
   },
+  "/v1/g/{garage}/admin/reservations": {
+    get: { summary: "Reservations by status, paginated (owner only)", tags: ["admin"] },
+  },
+  "/v1/g/{garage}/admin/reservations/{id}/decide": {
+    post: { summary: "Approve or decline a pending request (owner only)", tags: ["admin"] },
+  },
+  "/v1/g/{garage}/admin/reservations/{id}/cancel": {
+    post: { summary: "Cancel an approved reservation (owner only)", tags: ["admin"] },
+  },
   "/v1/g/{garage}/admin/members": {
     get: { summary: "List members with stats (owner only)", tags: ["admin"] },
   },

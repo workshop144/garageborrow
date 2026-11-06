@@ -8,6 +8,7 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { assertAvailable, commitAvailable, commitLoanExtension } from "../lib/availability.js";
+import { assertNoOpenRequest, bumpBorrowRequestCount } from "../lib/borrow-limits.js";
 import { LIABILITY_COPY_VERSION } from "../lib/liability.js";
 import { AUTO_CONFIRM_AFTER_MS, confirmClaimedReturns } from "../lib/loan-lifecycle.js";
 import { logger } from "../lib/logger.js";
@@ -65,6 +66,8 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
   const needsApproval = access === "request" || item.requires_approval;
   const window = { start: Date.parse(ts), end: Date.parse(expectedReturnAt) };
   if (needsApproval) {
+    // Each request pings the owner: one pending request per item, and a daily cap.
+    await assertNoOpenRequest(garage.id, item.id, user.phone, { pendingOnly: true });
     const instanceId = await assertAvailable({
       item,
       instanceId: body.instance_id,
@@ -72,6 +75,8 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
       window,
       commits: false,
     });
+    // Counted only once the request passed the checks, just before the write.
+    await bumpBorrowRequestCount(garage.id, user.phone);
     const reservation = {
       id: newId(),
       garage_id: garage.id,

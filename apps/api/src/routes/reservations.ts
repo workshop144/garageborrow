@@ -7,6 +7,11 @@ import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { assertAvailable, commitAvailable } from "../lib/availability.js";
+import {
+  assertNoOpenRequest,
+  assertReservationWindow,
+  bumpBorrowRequestCount,
+} from "../lib/borrow-limits.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import {
   getItem,
@@ -45,6 +50,12 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
   if (access === "hidden") throw new ApiError("not_found", "Item not found");
   const approvalRequired = access === "request" || item.requires_approval;
   const window = { start: Date.parse(body.start_at), end: Date.parse(body.end_at) };
+  // Bounded like loans: an open-ended window held a unit indefinitely.
+  assertReservationWindow(window);
+  await assertNoOpenRequest(garage.id, item.id, user.phone);
+  // Counted against the daily cap only once availability passed, just before
+  // the row is written: refused requests do not use up the member's budget.
+  const countRequest = () => bumpBorrowRequestCount(garage.id, user.phone);
   const build = (instanceId: string | undefined): Reservation => ({
     id: newId(),
     garage_id: garage.id,
@@ -61,10 +72,11 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
   let reservation: Reservation;
   if (approvalRequired) {
     reservation = build(await assertAvailable({ ...check, commits: false }));
+    await countRequest();
     await putReservation(reservation);
   } else {
     // An approved reservation takes a unit: commit it atomically.
-    reservation = await commitAvailable(check, build, reservationRow);
+    reservation = await commitAvailable(check, build, reservationRow, undefined, countRequest);
   }
   if (approvalRequired) {
     // The owner decides (POST /admin/reservations/:id/decide); the member hears then.
@@ -103,7 +115,12 @@ reservationRoutes.delete("/v1/g/:garage/reservations/:id", async (c) => {
   if (stored.status !== "pending" && stored.status !== "approved") {
     throw new ApiError("conflict", `Reservation is ${stored.status}`);
   }
-  const cancelled: Reservation = { ...stored, status: "cancelled" };
+  const cancelled: Reservation = {
+    ...stored,
+    status: "cancelled",
+    cancelled_at: nowIso(),
+    cancelled_by_phone: user.phone,
+  };
   if (!(await putReservationIfStatus(cancelled, stored.status))) {
     throw new ApiError("conflict", "Reservation changed, reload and try again");
   }

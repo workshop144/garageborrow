@@ -58,8 +58,8 @@ describe("approval-required requests", () => {
   it("a reservation request notifies the owner, and no 'decided' goes to the requester", async () => {
     const res = await post("/reservations", HOWDY_PHONE, {
       item_id: "saw",
-      start_at: "2099-02-01T12:00:00Z",
-      end_at: "2099-02-03T12:00:00Z",
+      start_at: new Date(Date.now() + 86400_000).toISOString(),
+      end_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
     });
     expect(res.status).toBe(201);
     expect(sent.map((e) => [e.type, e.user_phone])).toEqual([

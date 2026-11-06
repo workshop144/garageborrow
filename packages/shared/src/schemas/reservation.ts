@@ -17,6 +17,10 @@ export const ReservationSchema = z.object({
   decided_by_phone: PhoneE164.optional(),
   decided_at: IsoDateTime.optional(),
   decline_reason: z.string().optional(),
+  // Set when the reservation is cancelled (by the borrower or the owner);
+  // the approval fields above are left as they were.
+  cancelled_at: IsoDateTime.optional(),
+  cancelled_by_phone: PhoneE164.optional(),
   // "borrow" when a borrow needing approval became this pending request.
   source: z.enum(["borrow", "reserve"]).optional(),
 });

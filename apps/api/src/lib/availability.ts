@@ -170,15 +170,24 @@ const COMMIT_ATTEMPTS = 3;
 // reads loans and reservations, and the write commits only if no other
 // commitment for the item landed in between; otherwise the check runs again
 // against the new state (and normally refuses: the unit is gone).
+// `beforeWrite` runs once, after the first availability check passes and
+// before the first write (used to count a request against a rate limit only
+// when it can actually be granted).
 export async function commitAvailable<T>(
   check: Omit<AvailabilityCheck, "commits">,
   build: (instanceId: string | undefined) => T,
   toRow: (value: T) => Record<string, unknown> & { PK: string; SK: string },
   rowCondition?: RowCondition,
+  beforeWrite?: () => Promise<void>,
 ): Promise<T> {
+  let ranBeforeWrite = false;
   for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
     const seen = await getItemLockVersion(check.item.garage_id, check.item.id);
     const instanceId = await assertAvailable({ ...check, commits: true });
+    if (beforeWrite && !ranBeforeWrite) {
+      ranBeforeWrite = true;
+      await beforeWrite();
+    }
     const value = build(instanceId);
     if (
       await commitWithItemLock(

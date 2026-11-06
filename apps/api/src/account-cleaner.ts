@@ -11,7 +11,7 @@
 //      its pseudonym; it is removed only once the scrub and the Cognito delete
 //      both finished, so an interrupted or partial run resumes the next night.
 //
-//   2. Reset the per-day notifications_sent_today counter on every user
+//   2. Reset the per-day notification counters (DAILY_COUNTERS) on every user
 //      record. The counter resets at user-local midnight; running this at
 //      03:00 ET is "close enough" for our single-tenant MVP.
 //
@@ -38,6 +38,7 @@ import {
 import { ddb } from "./lib/ddb.js";
 import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
+import { DAILY_COUNTERS } from "./lib/spam-cap.js";
 import { rewriteRow, type Row } from "./lib/row-rewrite.js";
 import { initSentry } from "./lib/sentry.js";
 import type { User } from "@garageborrow/shared";
@@ -179,17 +180,19 @@ export async function runCleanup(now: Date): Promise<DeleteCounts> {
       },
     });
     for (const u of allUsers) {
-      const item = u as User & { PK: string; SK: string; notifications_sent_today?: number };
-      if (!item.notifications_sent_today) continue;
-      // Touch only the counter: a whole-item put of the Scan snapshot would revert
+      const item = u as User & { PK: string; SK: string } & Record<string, unknown>;
+      const set = DAILY_COUNTERS.filter((attr) => item[attr]);
+      if (set.length === 0) continue;
+      // Touch only the counters: a whole-item put of the Scan snapshot would revert
       // profile edits made since, and recreate a row deleted meanwhile.
       try {
         await ddb().send(
           new UpdateCommand({
             TableName: env.tableName(),
             Key: { PK: item.PK, SK: item.SK },
-            UpdateExpression: "SET notifications_sent_today = :zero",
+            UpdateExpression: `SET ${set.map((_, i) => `#c${i} = :zero`).join(", ")}`,
             ConditionExpression: "attribute_exists(PK)",
+            ExpressionAttributeNames: Object.fromEntries(set.map((a, i) => [`#c${i}`, a])),
             ExpressionAttributeValues: { ":zero": 0 },
           }),
         );
