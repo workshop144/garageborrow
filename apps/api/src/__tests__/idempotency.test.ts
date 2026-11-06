@@ -51,4 +51,76 @@ describe("Idempotency-Key middleware", () => {
     );
     expect(loanItems).toHaveLength(1);
   });
+
+  it("runs the handler once when two requests with the same key arrive together", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    seedMembership(FAMILY_PHONE, "family");
+    seedItemRecord({ id: "drill" });
+    seedItemRecord({ id: "saw" });
+    const app = createApp();
+    const send = () =>
+      app.request(`/v1/g/${GARAGE_ID}/loans`, {
+        method: "POST",
+        headers: {
+          ...authHeader(FAMILY_PHONE),
+          "content-type": "application/json",
+          "Idempotency-Key": "race-1",
+        },
+        body: JSON.stringify({ item_id: "saw", liability_acknowledged: true }),
+      });
+    const [a, b] = await Promise.all([send(), send()]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+    const loans = listAll().filter((it) => String(it["SK"]).startsWith("LOAN#"));
+    expect(loans).toHaveLength(1);
+    // Once the first finished, a retry replays it.
+    const c = await send();
+    expect(c.status).toBe(201);
+  });
+
+  it("does not replay a key's response on a different endpoint", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    seedMembership(FAMILY_PHONE, "family");
+    seedItemRecord({ id: "drill" });
+    const app = createApp();
+    const headers = {
+      ...authHeader(FAMILY_PHONE),
+      "content-type": "application/json",
+      "Idempotency-Key": "reused",
+    };
+    const loan = await app.request(`/v1/g/${GARAGE_ID}/loans`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ item_id: "drill", liability_acknowledged: true }),
+    });
+    expect(loan.status).toBe(201);
+    const donation = await app.request(`/v1/g/${GARAGE_ID}/donations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ item_name: "Saw", description: "ok", condition: "good" }),
+    });
+    expect(donation.status).toBe(201);
+    expect(Object.keys((await donation.json()) as object)).not.toContain("loan");
+  });
+
+  it("releases the key after a failed request so the retry runs", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    seedMembership(FAMILY_PHONE, "family");
+    const app = createApp();
+    const send = () =>
+      app.request(`/v1/g/${GARAGE_ID}/loans`, {
+        method: "POST",
+        headers: {
+          ...authHeader(FAMILY_PHONE),
+          "content-type": "application/json",
+          "Idempotency-Key": "retry-1",
+        },
+        body: JSON.stringify({ item_id: "drill", liability_acknowledged: true }),
+      });
+    expect((await send()).status).toBe(404);
+    seedItemRecord({ id: "drill" });
+    expect((await send()).status).toBe(201);
+  });
 });
