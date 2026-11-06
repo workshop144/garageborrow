@@ -1,6 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # CI-only tooling (Lighthouse). deploy.yml installs with --filter '!./tools/*'.
+  - "tools/*"
 
 # Matches the Dependabot cooldown (ADR-089): a release must be 3 days old before
 # pnpm resolves it. Minutes. Also enforced on `pnpm install --frozen-lockfile`

@@ -24,6 +24,9 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Deploy never pushes; keep the token out of .git/config.
+          persist-credentials: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
@@ -33,7 +36,9 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # CI-only tooling under tools/ (Lighthouse and its ~70 packages) stays
+        # out of the job that holds the OIDC deploy role.
+        run: pnpm install --frozen-lockfile --filter '!./tools/*'
 
       - name: Build
         run: pnpm build
