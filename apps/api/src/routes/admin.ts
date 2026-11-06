@@ -41,8 +41,10 @@ import {
   putInvite,
   putItem,
   putMembership,
+  type LoanRecord,
   updateLoan,
 } from "../lib/repo.js";
+import { settleReturnCounters } from "../lib/loan-lifecycle.js";
 import type { AppEnv } from "../lib/types.js";
 import { audit, setAuditDetails } from "../middleware/audit.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -347,16 +349,19 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/return", async (c) => {
   const garage = mustGarage(c);
   const id = c.req.param("id");
   if (!id) throw new ApiError("bad_request", "Missing loan id");
-  const loan = await getLoan(garage.id, id);
+  const loan: LoanRecord | undefined = await getLoan(garage.id, id);
   if (!loan) throw new ApiError("not_found", "Loan not found");
-  if (loan.status !== "active") {
-    throw new ApiError("conflict", "Loan is not active");
+  if (loan.status !== "active" && loan.status !== "overdue") {
+    throw new ApiError("conflict", "Loan is not out");
   }
   const ts = nowIso();
-  const updated: Loan = { ...loan, status: "returned", actual_return_at: ts };
+  // Keep the borrower's claim time when there is one: that is when it came back.
+  const returnedAt = loan.return_claimed_at ? (loan.actual_return_at ?? ts) : ts;
+  const updated: LoanRecord = { ...loan, status: "returned", actual_return_at: returnedAt };
   if (!(await updateLoan(updated, loan))) {
     throw new ApiError("conflict", "This loan just changed; reload and try again");
   }
+  await settleReturnCounters(loan, returnedAt);
   setAuditDetails(c, {
     action_type: "loan.owner_returned",
     entity_type: "item",
@@ -369,6 +374,11 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/return", async (c) => {
     garage_id: garage.id,
     user_phone: loan.borrower_phone,
     payload: { loan_id: loan.id, claimed_at: ts, by: "owner" },
+  });
+  await invokeNotifier({
+    type: "waitlist_unblocked",
+    garage_id: garage.id,
+    payload: { item_id: loan.item_id },
   });
   return c.json({ loan: updated });
 });
