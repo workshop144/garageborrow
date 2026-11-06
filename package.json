@@ -11,9 +11,9 @@
   },
   "engines": {
     "node": ">=22.12.0",
-    "pnpm": ">=9.0.0"
+    "pnpm": ">=12.0.0"
   },
-  "packageManager": "pnpm@9.12.0",
+  "packageManager": "pnpm@12.17.0",
   "scripts": {
     "build": "pnpm -r --filter \"./apps/*\" --filter \"./packages/*\" run build",
     "dev": "pnpm --filter @garageborrow/web dev",
@@ -31,17 +31,17 @@
     "@types/node": "^26.6.6",
     "@typescript-eslint/eslint-plugin": "^8.72.1",
     "@typescript-eslint/parser": "^8.72.1",
-    "eslint": "^10.13.0",
+    "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-react": "^7.37.1",
+    "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "globals": "^17.13.0",
-    "husky": "^9.1.6",
+    "globals": "^17.14.0",
+    "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
@@ -51,12 +51,5 @@
     "*.{json,md,yml,yaml,css}": [
       "prettier --write"
     ]
-  },
-  "pnpm": {
-    "peerDependencyRules": {
-      "allowedVersions": {
-        "eslint-plugin-react>eslint": "10"
-      }
-    }
   }
 }
