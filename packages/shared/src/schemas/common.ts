@@ -14,6 +14,8 @@ export const TIER_NAMES = ["howdy", "friend", "family"] as const;
 export type TierName = (typeof TIER_NAMES)[number];
 export const TierNameSchema = z.enum(TIER_NAMES);
 
+export { PHOTO_KEY_RE } from "../photo-key.js";
+
 export const NonNegInt = z.number().int().nonnegative();
 export const PosInt = z.number().int().positive();
 

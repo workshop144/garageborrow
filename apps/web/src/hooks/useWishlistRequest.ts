@@ -6,7 +6,7 @@ import type { WishlistRow } from "./useWishlist";
 
 export type WishlistDetail = {
   request: WishlistRow;
-  voters: Array<{ phone: string; display_name: string | null }>;
+  voters: Array<{ phone: string | null; display_name: string | null }>;
   requester_display_name: string | null;
 };
 

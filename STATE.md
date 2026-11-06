@@ -1,6 +1,6 @@
 # Current Build State
 
-Last updated: 2026-11-06 by Claude (agent): /v1/me privacy and deletion fixes (S1-1, S1-3, S5-3, branch `sec/2026-11-06c-me-routes-privacy-and-deletion`); production deploy has never run.
+Last updated: 2026-11-06 by Claude (agent): wishlist hidden-member and photo-key fixes (S1-2, S2-1, S5-1, branch `sec/2026-11-06c-wishlist-hidden-members-and-photo-key`); production deploy has never run.
 
 ## Phase status
 
@@ -29,6 +29,7 @@ Last updated: 2026-11-06 by Claude (agent): /v1/me privacy and deletion fixes (S
 - Idempotency keys are claimed before the handler (conditional in-progress marker, 60 s) and scoped by method and path. Donation accept is one TransactWrite conditional on `pending`. Photo keys must match `uploads/...` (API, including owner `POST/PATCH /items`) and the web renders only such keys. Malformed JSON is a 400.
 - Account cleaner resets counters first, queries the user partition, and retries BatchWrite UnprocessedItems. The image resizer rethrows transient errors so the async retry and its DLQ apply.
 - Wishlist (request and vote on missing gear) shipped in the original v1.0 history, even though the README listed it under Phase B.
+- Wishlist privacy (sec/2026-11-06c): list, detail, vote and `/v1/me/wishlist` show another member's phone as `***<last4>` only when GET /members would list them (`visibility === "visible"` and no `deleted_at`); a hidden, deleted or missing requester, decider or voter is `phone: null`, `display_name: null` to other members. The garage owner and the subject still see the full number and the name, and `/v1/me/wishlist` applies the owner rule per garage. The web shows a name, else `Member <last4>` when it got a number (the owner), else "A neighbor". List routes paginate first and decorate only the returned page (profile reads run in parallel, memoised per request). `PHOTO_KEY_RE` lives in `packages/shared/src/photo-key.ts` (zod-free, subpath export `@garageborrow/shared/photo-key`); the shared schemas, the API `PhotoKey` and the web `photoUrl()` all import it, so dot segments are a 400 on create and the web renders wishlist photos only through `photoUrl()`. `WishlistRequestSchema.photo_url` is tightened too, but it is only a type; nothing parses stored rows with it. Local checks after PR #41 review fixes: lint, typecheck clean; tests 120 shared + 258 api + 139 web = 517 passing; `pnpm -r build` ok.
 - Tenant name, site URL, time zone, governing law, venue and garage slug are GitHub repository variables, never code (`46e89fe`). Do not copy their values into repo files.
 - CI (`.github/workflows/ci.yml`): lint, typecheck, test, build, Lighthouse, plus `scan-secrets` via the reusable `.github/workflows/gitleaks.yml` (PR #36). `state-guard` checks that code PRs update STATE.md (added 2026-11-06).
 - `security-review.yml` is wired for same-repo PRs but skips with a notice: the `ANTHROPIC_API_KEY` repo secret is not set (verified on the PR #36 run). The local `/security-review` step in CLAUDE.md is the only review that actually runs. Setting the key would bill API credits, not a Claude plan, so it stays an operator decision.

@@ -374,9 +374,15 @@ describe("WishlistRequestSchema", () => {
       desired_by: DATE,
       reason: "Driveway needs it for an event",
       reference_url: "https://example.com/washer",
-      photo_url: "wishlist/abc.jpg",
+      photo_url: "uploads/wishlist/abc.jpg",
     });
     expect(r.success).toBe(true);
+  });
+  it("rejects a photo_url that is not an upload key or has dot segments", () => {
+    for (const photo_url of ["uploads/../x", "uploads/../../v1/g/x/admin", "https://e.com/a.jpg"]) {
+      const r = WishlistRequestSchema.safeParse({ ...valid, photo_url });
+      expect(r.success).toBe(false);
+    }
   });
   it("rejects item_name over 120 chars", () => {
     const r = WishlistRequestSchema.safeParse({ ...valid, item_name: "x".repeat(121) });

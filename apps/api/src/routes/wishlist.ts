@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { HttpUrl } from "@garageborrow/shared";
-import type { WishlistRequest } from "@garageborrow/shared";
+import type { User, WishlistRequest } from "@garageborrow/shared";
 import { z } from "zod";
 
 import { mustGarage, mustUser } from "../lib/ctx.js";
@@ -9,10 +9,12 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
+import { PhotoKey } from "../lib/photo-key.js";
 import {
   bumpWindowCounter,
   bumpWishlistVoteCount,
   deleteWishlistVote,
+  getGarage,
   getUser,
   getUserAnyGarage,
   getWishlistRequest,
@@ -46,21 +48,70 @@ function wishlistEnabled(): MiddlewareHandler<AppEnv> {
 // /me/wishlist is cross-garage and only needs the auth middleware. Mount it
 // before the per-garage middleware so the :garage param checks don't fire.
 wishlistRoutes.use("/v1/me/wishlist", requireAuth());
-// Directory policy: members see only the last 4 digits of another member's phone.
-// The garage owner and the member themselves see full numbers.
-function maskPhone<T extends string | undefined>(phone: T, viewer: string, isOwner: boolean): T {
-  if (!phone || isOwner || phone === viewer) return phone;
-  return `***${phone.slice(-4)}` as T;
+// Directory policy: the garage owner and the member themselves see full
+// numbers. Other members see the last 4 digits, and only of a member that GET
+// /members would list (visible and not pending deletion). A hidden, deleted or
+// missing member shows no digits and no name, so the wishlist cannot link a
+// hidden member's activity to a phone number.
+function isListedProfile(u: User | undefined): u is User {
+  return !!u && u.visibility === "visible" && !u.deleted_at;
 }
 
-function forViewer<T extends Pick<WishlistRequest, "requester_phone" | "decided_by_phone">>(
+type ProfileLookup = (garageId: string, phone: string) => Promise<User | undefined>;
+
+// Per-request memo so a list of requests by the same few members reads each
+// profile once.
+function profileLookup(): ProfileLookup {
+  const seen = new Map<string, Promise<User | undefined>>();
+  return (garageId, phone) => {
+    const key = `${garageId}#${phone}`;
+    let hit = seen.get(key);
+    if (!hit) {
+      hit = getUser(garageId, phone);
+      seen.set(key, hit);
+    }
+    return hit;
+  };
+}
+
+async function maskPhone(
+  phone: string,
+  garageId: string,
+  viewer: string,
+  isOwner: boolean,
+  lookup: ProfileLookup,
+): Promise<string | null> {
+  if (isOwner || phone === viewer) return phone;
+  const u = await lookup(garageId, phone);
+  return isListedProfile(u) ? `***${phone.slice(-4)}` : null;
+}
+
+type MemberView<T> = Omit<T, "requester_phone" | "decided_by_phone"> & {
+  requester_phone: string | null;
+  decided_by_phone?: string | null;
+};
+
+async function forViewer<
+  T extends Pick<WishlistRequest, "garage_id" | "requester_phone" | "decided_by_phone">,
+>(
   req: T,
   viewer: string,
   isOwner: boolean,
-): T {
-  const out = { ...req, requester_phone: maskPhone(req.requester_phone, viewer, isOwner) };
-  if (req.decided_by_phone !== undefined) {
-    out.decided_by_phone = maskPhone(req.decided_by_phone, viewer, isOwner);
+  lookup: ProfileLookup = profileLookup(),
+): Promise<MemberView<T>> {
+  const { requester_phone, decided_by_phone, ...rest } = req;
+  const out: MemberView<T> = {
+    ...rest,
+    requester_phone: await maskPhone(requester_phone, req.garage_id, viewer, isOwner, lookup),
+  };
+  if (decided_by_phone !== undefined) {
+    out.decided_by_phone = await maskPhone(
+      decided_by_phone,
+      req.garage_id,
+      viewer,
+      isOwner,
+      lookup,
+    );
   }
   return out;
 }
@@ -70,22 +121,32 @@ wishlistRoutes.get("/v1/me/wishlist", async (c) => {
   const params = parsePageParams(c);
   const primary = await getUserAnyGarage(user.phone);
   if (!primary) throw new ApiError("not_found", "User not found");
-  type Mine = WishlistRequest & { my_vote: boolean };
-  const all: Mine[] = [];
+  const lookup = profileLookup();
+  const ownerOf = new Set<string>();
+  const all: Array<WishlistRequest & { my_vote: boolean }> = [];
   for (const garageId of primary.garages_member_of) {
-    const requests = await listWishlistRequests(garageId);
-    const myVotes = await listAllWishlistVotesForVoter(garageId, user.phone);
+    const [garage, requests, myVotes] = await Promise.all([
+      getGarage(garageId),
+      listWishlistRequests(garageId),
+      listAllWishlistVotesForVoter(garageId, user.phone),
+    ]);
+    // The garage owner sees full numbers here too, as on the per-garage list.
+    if (garage?.owner_phone === user.phone) ownerOf.add(garageId);
     const mineRequestIds = new Set(myVotes.map((v) => v.request_id));
     for (const r of requests) {
       const isMine = r.requester_phone === user.phone;
       const iVoted = mineRequestIds.has(r.id);
       if (!isMine && !iVoted) continue;
-      all.push(forViewer({ ...r, my_vote: iVoted }, user.phone, false));
+      all.push({ ...r, my_vote: iVoted });
     }
   }
   all.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  // Decorate only the returned page: each distinct phone costs a profile read.
   const { page, next_cursor } = paginate(all, params);
-  return c.json(next_cursor ? { items: page, next_cursor } : { items: page });
+  const items = await Promise.all(
+    page.map((r) => forViewer(r, user.phone, ownerOf.has(r.garage_id), lookup)),
+  );
+  return c.json(next_cursor ? { items, next_cursor } : { items });
 });
 
 // ─────────────────────── Member routes ───────────────────────
@@ -120,11 +181,15 @@ wishlistRoutes.get("/v1/g/:garage/wishlist", async (c) => {
   const myVotes = await listAllWishlistVotesForVoter(garage.id, user.phone);
   const mineRequestIds = new Set(myVotes.map((v) => v.request_id));
   const isOwner = garage.owner_phone === user.phone;
-  const decorated = filtered.map((r) =>
-    forViewer({ ...r, my_vote: mineRequestIds.has(r.id) }, user.phone, isOwner),
+  const lookup = profileLookup();
+  // Decorate only the returned page: each distinct phone costs a profile read.
+  const { page, next_cursor } = paginate(filtered, params);
+  const items = await Promise.all(
+    page.map((r) =>
+      forViewer({ ...r, my_vote: mineRequestIds.has(r.id) }, user.phone, isOwner, lookup),
+    ),
   );
-  const { page, next_cursor } = paginate(decorated, params);
-  return c.json(next_cursor ? { items: page, next_cursor } : { items: page });
+  return c.json(next_cursor ? { items, next_cursor } : { items });
 });
 
 const CreateRequestSchema = z
@@ -137,12 +202,9 @@ const CreateRequestSchema = z
       .optional(),
     reason: z.string().max(500).optional(),
     reference_url: HttpUrl.optional(),
-    // An uploads/ key from /v1/uploads/sign, rendered as /img/<key>.
-    photo_url: z
-      .string()
-      .max(300)
-      .regex(/^uploads\/[\w./-]+$/)
-      .optional(),
+    // An uploads/ key from /v1/uploads/sign, rendered as /img/<key>. The shared
+    // PhotoKey rejects dot segments, which would let the key escape /img/.
+    photo_url: PhotoKey.optional(),
   })
   .strict();
 
@@ -209,24 +271,26 @@ wishlistRoutes.get("/v1/g/:garage/wishlist/:id", async (c) => {
   if (!req) throw new ApiError("not_found", "Wishlist request not found");
   const votes = await listWishlistVotes(garage.id, id);
   const isOwner = garage.owner_phone === user.phone;
-  // Voter list respects each voter's visibility setting — hidden voters are
-  // counted but not named — and shows other members' phones as last 4 only.
-  const voters: Array<{ phone: string; display_name: string | null }> = [];
-  for (const v of votes) {
-    const u = await getUser(garage.id, v.voter_phone);
-    const phone = maskPhone(v.voter_phone, user.phone, isOwner);
-    if (!u || u.visibility === "hidden") {
-      voters.push({ phone, display_name: null });
-    } else {
-      voters.push({ phone, display_name: u.display_name });
-    }
-  }
-  const requester = await getUser(garage.id, req.requester_phone);
+  const lookup = profileLookup();
+  // Voter list follows each voter's visibility: a hidden, deleted or missing
+  // voter is counted but shows no name, and to other members no phone digits.
+  // The garage owner sees every name and number, as in the member directory.
+  const voters = await Promise.all(
+    votes.map(async (v) => {
+      const u = await lookup(garage.id, v.voter_phone);
+      const phone = await maskPhone(v.voter_phone, garage.id, user.phone, isOwner, lookup);
+      const named = u && (isOwner || isListedProfile(u) || v.voter_phone === user.phone);
+      return { phone, display_name: named ? u.display_name : null };
+    }),
+  );
+  const requester = await lookup(garage.id, req.requester_phone);
   const requesterDisplay =
-    !requester || requester.visibility === "hidden" ? null : requester.display_name;
+    requester && (isOwner || isListedProfile(requester) || req.requester_phone === user.phone)
+      ? requester.display_name
+      : null;
   const myVote = votes.some((v) => v.voter_phone === user.phone);
   return c.json({
-    request: forViewer({ ...req, my_vote: myVote }, user.phone, isOwner),
+    request: await forViewer({ ...req, my_vote: myVote }, user.phone, isOwner, lookup),
     voters,
     requester_display_name: requesterDisplay,
   });
@@ -249,7 +313,11 @@ wishlistRoutes.post("/v1/g/:garage/wishlist/:id/vote", async (c) => {
   });
   if (!recorded) {
     return c.json({
-      request: forViewer({ ...req, my_vote: true }, user.phone, garage.owner_phone === user.phone),
+      request: await forViewer(
+        { ...req, my_vote: true },
+        user.phone,
+        garage.owner_phone === user.phone,
+      ),
       vote_count: req.vote_count,
     });
   }
@@ -272,7 +340,7 @@ wishlistRoutes.post("/v1/g/:garage/wishlist/:id/vote", async (c) => {
     });
   }
   return c.json({
-    request: forViewer(
+    request: await forViewer(
       { ...req, vote_count: newCount, my_vote: true },
       user.phone,
       garage.owner_phone === user.phone,
@@ -290,13 +358,17 @@ wishlistRoutes.delete("/v1/g/:garage/wishlist/:id/vote", async (c) => {
   if (!req) throw new ApiError("not_found", "Wishlist request not found");
   if (!(await deleteWishlistVote(garage.id, id, user.phone))) {
     return c.json({
-      request: forViewer({ ...req, my_vote: false }, user.phone, garage.owner_phone === user.phone),
+      request: await forViewer(
+        { ...req, my_vote: false },
+        user.phone,
+        garage.owner_phone === user.phone,
+      ),
       vote_count: req.vote_count,
     });
   }
   const newCount = await bumpWishlistVoteCount(req, -1);
   return c.json({
-    request: forViewer(
+    request: await forViewer(
       { ...req, vote_count: newCount, my_vote: false },
       user.phone,
       garage.owner_phone === user.phone,

@@ -4,7 +4,13 @@ import type { WishlistRequest, WishlistRequestStatus } from "@garageborrow/share
 import { api } from "../lib/api";
 import { DEFAULT_GARAGE_SLUG } from "./useGarageItems";
 
-export type WishlistRow = WishlistRequest & { my_vote: boolean };
+// Member view of a request: another member's phone is "***1234", or null when
+// that member is hidden or leaving; the owner and the subject see full numbers.
+export type WishlistRow = Omit<WishlistRequest, "requester_phone" | "decided_by_phone"> & {
+  requester_phone: string | null;
+  decided_by_phone?: string | null;
+  my_vote: boolean;
+};
 
 type ListResponse = { items: WishlistRow[]; next_cursor?: string };
 
