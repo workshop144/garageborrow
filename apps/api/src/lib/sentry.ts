@@ -5,6 +5,8 @@
 
 import * as Sentry from "@sentry/aws-serverless";
 
+import { scrubPhonesDeep } from "@garageborrow/shared/scrub-phones";
+
 let initialized = false;
 
 export function initSentry(): void {
@@ -26,6 +28,11 @@ export function initSentry(): void {
     // esbuild bundles us into one file and we record no spans, so skip it
     // (otherwise every cold start logs a "failed to register" warning).
     enableRuntimeChannelInjection: false,
+    // Phone numbers reach events through request paths, messages and extras
+    // (admin routes carry the member's phone). Scrub every string before the
+    // event or breadcrumb leaves the process; pino's redaction does not apply.
+    beforeSend: (event) => scrubPhonesDeep(event),
+    beforeBreadcrumb: (breadcrumb) => scrubPhonesDeep(breadcrumb),
   });
   initialized = true;
 }
@@ -34,7 +41,7 @@ export function captureError(err: unknown, extra?: Record<string, unknown>): voi
   if (!initialized) return;
   if (!process.env.SENTRY_DSN) return;
   if (extra) {
-    Sentry.captureException(err, { extra });
+    Sentry.captureException(err, { extra: scrubPhonesDeep(extra) });
   } else {
     Sentry.captureException(err);
   }

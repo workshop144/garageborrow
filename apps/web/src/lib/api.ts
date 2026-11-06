@@ -1,3 +1,5 @@
+import { scrubPhones } from "@garageborrow/shared/scrub-phones";
+
 import { captureError } from "./sentry";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/v1";
@@ -93,7 +95,7 @@ export async function apiRequest<T>(path: string, opts: RequestOpts = {}): Promi
       details: env.error?.details,
     });
     if (apiErr.status >= 500) {
-      captureError(apiErr, { url, method: init.method });
+      captureError(apiErr, { url: scrubPhones(url), method: init.method });
     }
     throw apiErr;
   }
