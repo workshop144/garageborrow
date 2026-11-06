@@ -41,6 +41,7 @@ export function resetDdbStore(): void {
   afterNextScan = undefined;
   beforeNextTransact = undefined;
   failPut = undefined;
+  batchLeaveUnprocessed = 0;
 }
 
 export function seedItem(it: Item): void {
@@ -201,6 +202,13 @@ export function onNextScan(fn: () => void): void {
 let failPut: ((item: Item) => boolean) | undefined;
 export function failNextPut(match: (item: Item) => boolean): void {
   failPut = match;
+}
+
+// The next BatchWrite calls leave this many requests unprocessed in total
+// (returned as UnprocessedItems), as DynamoDB does under throttling.
+let batchLeaveUnprocessed = 0;
+export function leaveBatchUnprocessed(n: number): void {
+  batchLeaveUnprocessed = n;
 }
 
 // Runs once, right before the next TransactWrite checks its conditions: lets a
@@ -383,8 +391,14 @@ export function installDdbMock(): void {
         PutRequest?: { Item: Item };
       }>
     >;
-    for (const reqs of Object.values(tables)) {
+    const unprocessed: Record<string, unknown[]> = {};
+    for (const [tableName, reqs] of Object.entries(tables)) {
       for (const r of reqs) {
+        if (batchLeaveUnprocessed > 0) {
+          batchLeaveUnprocessed--;
+          (unprocessed[tableName] ??= []).push(r);
+          continue;
+        }
         if (r.DeleteRequest) {
           const k = `${r.DeleteRequest.Key.PK}#${r.DeleteRequest.Key.SK}`;
           store.items.delete(k);
@@ -394,7 +408,9 @@ export function installDdbMock(): void {
         }
       }
     }
-    return Promise.resolve({});
+    return Promise.resolve(
+      Object.keys(unprocessed).length > 0 ? { UnprocessedItems: unprocessed } : {},
+    );
   });
 
   mock.on(QueryCommand).callsFake((input) => {

@@ -13,6 +13,7 @@ import {
   getPendingScrub,
   mentionsPhone,
   runCleanup,
+  setCleanerSleepForTest,
   scrubPhone,
   setCognitoClient,
 } from "../account-cleaner.js";
@@ -28,6 +29,7 @@ import {
   deleteItem as resetOne,
   installDdbMock,
   listAll,
+  leaveBatchUnprocessed,
   onNextScan,
   resetDdbStore,
   seedItem,
@@ -199,9 +201,9 @@ describe("account-cleaner", () => {
     const row = listAll().find((r) => r.PK === userKey.pk && r.SK === userKey.sk);
     if (!row) throw new Error("seeded user not found");
     row["notifications_sent_today"] = 4;
-    // The sweep's Scan of users (the second Scan) returns the old snapshot; the
+    // The sweep's Scan of users (the first Scan) returns the old snapshot; the
     // member renames themselves before the reset write lands.
-    onNextScan(() => onNextScan(() => seedItem({ ...row, display_name: "Renamed mid-sweep" })));
+    onNextScan(() => seedItem({ ...row, display_name: "Renamed mid-sweep" }));
     await runCleanup(new Date("2026-04-26T03:00:00Z"));
     const updated = listAll().find((r) => r.PK === userKey.pk && r.SK === userKey.sk);
     expect(updated?.["display_name"]).toBe("Renamed mid-sweep");
@@ -209,7 +211,7 @@ describe("account-cleaner", () => {
   });
 
   // The scrub reads the whole table with one Scan and writes later; runCleanup's
-  // fourth Scan (deleted users, their partition, votes, whole table) is that one.
+  // fourth Scan (counter reset, deleted users, votes, whole table) is that one.
   function afterWholeTableScan(fn: () => void): void {
     onNextScan(() => onNextScan(() => onNextScan(() => onNextScan(fn))));
   }
@@ -360,5 +362,34 @@ describe("account-cleaner", () => {
   it("recognises the encoded phone but not a longer number", () => {
     expect(mentionsPhone({ path: "/m/%2B15555550100" }, "+15555550100")).toBe(true);
     expect(mentionsPhone({ path: "/m/%2B155555501009" }, "+15555550100")).toBe(false);
+  });
+
+  it("retries BatchWrite UnprocessedItems so the user partition is really deleted", async () => {
+    setCleanerSleepForTest(() => Promise.resolve());
+    seedGarage();
+    seedUser(FAMILY_PHONE, { deleted_at: "2026-03-01T12:00:00Z" });
+    seedMembership(FAMILY_PHONE, "family");
+    for (let i = 0; i < 3; i++) {
+      seedItem({ PK: `USER#${FAMILY_PHONE}`, SK: `NOTIFICATION#2026-03-0${i + 1}#n${i}` });
+    }
+    leaveBatchUnprocessed(2);
+    await runCleanup(new Date("2026-04-26T03:00:00Z"));
+    expect(listAll().filter((r) => r.PK === `USER#${FAMILY_PHONE}`)).toEqual([]);
+    setCleanerSleepForTest(undefined);
+  });
+
+  it("resets the counters even when the hard-delete job fails", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE, { notifications_sent_today: 5 } as never);
+    // Counter-reset Scan first, then the deleted-users Scan throws.
+    onNextScan(() =>
+      onNextScan(() => {
+        throw Object.assign(new Error("throttled"), {
+          name: "ProvisionedThroughputExceededException",
+        });
+      }),
+    );
+    const counts = await runCleanup(new Date("2026-04-26T03:00:00Z"));
+    expect(counts.counters_reset).toBe(1);
   });
 });

@@ -168,92 +168,102 @@ export async function runCleanup(now: Date): Promise<DeleteCounts> {
     counters_reset: 0,
   };
 
-  // Job 1: hard-delete past-30d soft-deleted users.
-  const cutoff = new Date(now.getTime() - THIRTY_DAYS_MS).toISOString();
-  const usersToDelete = await scanAll({
-    filterExpression:
-      "begins_with(PK, :tenant) AND begins_with(SK, :user) AND attribute_exists(deleted_at) AND deleted_at < :cutoff",
-    expressionAttributeValues: {
-      ":tenant": "TENANT#",
-      ":user": "USER#",
-      ":cutoff": cutoff,
-    },
-  });
-
-  // Group by phone so we run the per-user cleanup once even when the user
-  // appears across multiple tenant partitions.
-  const byPhone = new Map<string, { user: User; pks: string[] }>();
-  for (const item of usersToDelete) {
-    const u = item as User & { PK?: string };
-    const phone = u.phone;
-    if (!phone) continue;
-    const entry = byPhone.get(phone) ?? { user: u, pks: [] };
-    if (u.PK) entry.pks.push(u.PK);
-    entry.user = u;
-    byPhone.set(phone, entry);
-  }
-
-  // Queue every due phone before touching its rows: deleting the USER rows
-  // destroys the selector above, so the queue is what lets a failed or timed
-  // out scrub resume on the next run.
-  for (const phone of byPhone.keys()) await ensurePendingScrub(phone, now);
-
-  for (const pending of await listPendingScrubs()) {
-    const phone = pending.phone;
-    try {
-      await deleteUserRecords(phone, byPhone.get(phone)?.pks ?? []);
-      const scrub = await anonymizeAcrossEntities(phone, pending.pseudonym);
-      counts.records_anonymized += scrub.written;
-      const cognitoGone = await deleteCognitoUser(phone);
-      if (scrub.complete && cognitoGone) {
+  // Job 2 runs first, in its own try: the 5/day spam cap depends on this
+  // reset, so it must not wait on (or die with) the slow hard-delete job.
+  try {
+    const allUsers = await scanAll({
+      filterExpression: "begins_with(PK, :tenant) AND begins_with(SK, :user)",
+      expressionAttributeValues: {
+        ":tenant": "TENANT#",
+        ":user": "USER#",
+      },
+    });
+    for (const u of allUsers) {
+      const item = u as User & { PK: string; SK: string; notifications_sent_today?: number };
+      if (!item.notifications_sent_today) continue;
+      // Touch only the counter: a whole-item put of the Scan snapshot would revert
+      // profile edits made since, and recreate a row deleted meanwhile.
+      try {
         await ddb().send(
-          new DeleteCommand({
+          new UpdateCommand({
             TableName: env.tableName(),
-            Key: { PK: pending.PK, SK: pending.SK },
+            Key: { PK: item.PK, SK: item.SK },
+            UpdateExpression: "SET notifications_sent_today = :zero",
+            ConditionExpression: "attribute_exists(PK)",
+            ExpressionAttributeValues: { ":zero": 0 },
           }),
         );
-        counts.hard_deleted_users++;
-        logger.info({ count: scrub.written }, "cleaner_hard_deleted_user");
-      } else {
-        logger.error(
-          { scrub_complete: scrub.complete, cognito_deleted: cognitoGone },
-          "cleaner_hard_delete_incomplete_will_retry",
-        );
+      } catch (err) {
+        if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+        continue;
       }
-    } catch (err) {
-      // Leave the pending row: the next run resumes this phone.
-      logger.error({ err }, "cleaner_hard_delete_failed_will_retry");
+      counts.counters_reset++;
     }
+  } catch (err) {
+    logger.error({ err }, "cleaner_counter_reset_failed");
   }
 
-  // Job 2: reset notifications_sent_today on every user record.
-  const allUsers = await scanAll({
-    filterExpression: "begins_with(PK, :tenant) AND begins_with(SK, :user)",
-    expressionAttributeValues: {
-      ":tenant": "TENANT#",
-      ":user": "USER#",
-    },
-  });
-  for (const u of allUsers) {
-    const item = u as User & { PK: string; SK: string; notifications_sent_today?: number };
-    if (!item.notifications_sent_today) continue;
-    // Touch only the counter: a whole-item put of the Scan snapshot would revert
-    // profile edits made since, and recreate a row deleted meanwhile.
-    try {
-      await ddb().send(
-        new UpdateCommand({
-          TableName: env.tableName(),
-          Key: { PK: item.PK, SK: item.SK },
-          UpdateExpression: "SET notifications_sent_today = :zero",
-          ConditionExpression: "attribute_exists(PK)",
-          ExpressionAttributeValues: { ":zero": 0 },
-        }),
-      );
-    } catch (err) {
-      if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-      continue;
+  // Job 1: hard-delete past-30d soft-deleted users.
+  try {
+    const cutoff = new Date(now.getTime() - THIRTY_DAYS_MS).toISOString();
+    const usersToDelete = await scanAll({
+      filterExpression:
+        "begins_with(PK, :tenant) AND begins_with(SK, :user) AND attribute_exists(deleted_at) AND deleted_at < :cutoff",
+      expressionAttributeValues: {
+        ":tenant": "TENANT#",
+        ":user": "USER#",
+        ":cutoff": cutoff,
+      },
+    });
+
+    // Group by phone so we run the per-user cleanup once even when the user
+    // appears across multiple tenant partitions.
+    const byPhone = new Map<string, { user: User; pks: string[] }>();
+    for (const item of usersToDelete) {
+      const u = item as User & { PK?: string };
+      const phone = u.phone;
+      if (!phone) continue;
+      const entry = byPhone.get(phone) ?? { user: u, pks: [] };
+      if (u.PK) entry.pks.push(u.PK);
+      entry.user = u;
+      byPhone.set(phone, entry);
     }
-    counts.counters_reset++;
+
+    // Queue every due phone before touching its rows: deleting the USER rows
+    // destroys the selector above, so the queue is what lets a failed or timed
+    // out scrub resume on the next run.
+    for (const phone of byPhone.keys()) await ensurePendingScrub(phone, now);
+
+    for (const pending of await listPendingScrubs()) {
+      const phone = pending.phone;
+      try {
+        await deleteUserRecords(phone, byPhone.get(phone)?.pks ?? []);
+        const scrub = await anonymizeAcrossEntities(phone, pending.pseudonym);
+        counts.records_anonymized += scrub.written;
+        const cognitoGone = await deleteCognitoUser(phone);
+        if (scrub.complete && cognitoGone) {
+          await ddb().send(
+            new DeleteCommand({
+              TableName: env.tableName(),
+              Key: { PK: pending.PK, SK: pending.SK },
+            }),
+          );
+          counts.hard_deleted_users++;
+          logger.info({ count: scrub.written }, "cleaner_hard_deleted_user");
+        } else {
+          logger.error(
+            { scrub_complete: scrub.complete, cognito_deleted: cognitoGone },
+            "cleaner_hard_delete_incomplete_will_retry",
+          );
+        }
+      } catch (err) {
+        // Leave the pending row: the next run resumes this phone.
+        logger.error({ err }, "cleaner_hard_delete_failed_will_retry");
+      }
+    }
+  } catch (err) {
+    // The pending-scrub rows stay; the next run resumes.
+    logger.error({ err }, "cleaner_hard_delete_job_failed");
   }
 
   return counts;
@@ -357,25 +367,54 @@ async function deleteUserRecords(phone: string, pks: string[]): Promise<void> {
 }
 
 async function deleteUserPartition(phone: string): Promise<void> {
-  const items = await scanAll({
-    filterExpression: "PK = :pk",
-    expressionAttributeValues: { ":pk": `USER#${phone}` },
-  });
-  // BatchWrite supports up to 25 deletes per batch.
-  for (let i = 0; i < items.length; i += 25) {
-    const slice = items.slice(i, i + 25);
-    await ddb().send(
-      new BatchWriteCommand({
-        RequestItems: {
-          [env.tableName()]: slice.map((row) => ({
-            DeleteRequest: {
-              Key: { PK: (row as { PK: string }).PK, SK: (row as { SK: string }).SK },
-            },
-          })),
-        },
+  // The partition is one key: Query it rather than Scan the whole table.
+  const items: { PK: string; SK: string }[] = [];
+  let last: Record<string, unknown> | undefined;
+  do {
+    const r = await ddb().send(
+      new QueryCommand({
+        TableName: env.tableName(),
+        KeyConditionExpression: "PK = :pk",
+        ExpressionAttributeValues: { ":pk": `USER#${phone}` },
+        ProjectionExpression: "PK, SK",
+        ...(last ? { ExclusiveStartKey: last } : {}),
       }),
     );
+    items.push(...((r.Items ?? []) as { PK: string; SK: string }[]));
+    last = r.LastEvaluatedKey;
+  } while (last);
+  // BatchWrite supports up to 25 deletes per batch.
+  for (let i = 0; i < items.length; i += 25) {
+    await batchWriteAll(
+      items.slice(i, i + 25).map((row) => ({ DeleteRequest: { Key: { PK: row.PK, SK: row.SK } } })),
+    );
   }
+}
+
+const BATCH_RETRY_ATTEMPTS = 8;
+
+// BatchWrite may hand back UnprocessedItems (throttling) without failing;
+// resend those with backoff until none are left, or throw so the pending
+// scrub row stays and the next run finishes the job.
+async function batchWriteAll(requests: Record<string, unknown>[]): Promise<void> {
+  let pending = requests;
+  for (let attempt = 0; pending.length > 0; attempt++) {
+    if (attempt >= BATCH_RETRY_ATTEMPTS) {
+      throw new Error(`BatchWrite left ${pending.length} items unprocessed`);
+    }
+    if (attempt > 0) await sleep(Math.min(50 * 2 ** attempt, 2000));
+    const r = await ddb().send(
+      new BatchWriteCommand({ RequestItems: { [env.tableName()]: pending } }),
+    );
+    pending = (r.UnprocessedItems?.[env.tableName()] ?? []) as Record<string, unknown>[];
+  }
+}
+
+let sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Tests skip the backoff waits.
+export function setCleanerSleepForTest(fn: ((ms: number) => Promise<void>) | undefined): void {
+  sleep = fn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 }
 
 // True once the Cognito identity is gone (deleted now or already absent).
