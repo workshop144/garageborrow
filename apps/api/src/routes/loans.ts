@@ -26,6 +26,11 @@ import { ownerOnly } from "../middleware/owner-only.js";
 
 export const loanRoutes = new Hono<AppEnv>();
 
+// The loan changed between our read and our conditional write.
+function loanChanged(): ApiError {
+  return new ApiError("conflict", "This loan just changed; reload and try again");
+}
+
 loanRoutes.use("/v1/g/:garage/loans", requireAuth(), loadGarageContext());
 loanRoutes.use("/v1/g/:garage/loans/*", requireAuth(), loadGarageContext());
 
@@ -125,7 +130,7 @@ loanRoutes.post("/v1/g/:garage/loans/:id/extend", async (c) => {
     extension_count: loan.extension_count + 1,
     last_extended_at: nowIso(),
   };
-  await updateLoan(next);
+  if (!(await updateLoan(next, loan))) throw loanChanged();
   await invokeNotifier({
     type: "loan_extended",
     garage_id: garage.id,
@@ -158,7 +163,7 @@ loanRoutes.post("/v1/g/:garage/loans/:id/return", async (c) => {
   };
   (next as { return_claimed_at?: string }).return_claimed_at = ts;
   (next as { return_claimed_by?: string }).return_claimed_by = user.phone;
-  await updateLoan(next);
+  if (!(await updateLoan(next, loan))) throw loanChanged();
   await invokeNotifier({
     type: "loan_returned",
     garage_id: garage.id,
@@ -184,7 +189,7 @@ loanRoutes.post("/v1/g/:garage/loans/:id/dispute", ownerOnly(), async (c) => {
   const next: Loan & { disputed_at?: string; dispute_reason?: string } = { ...loan };
   (next as { disputed_at?: string }).disputed_at = ts;
   (next as { dispute_reason?: string }).dispute_reason = body.reason;
-  await updateLoan(next);
+  if (!(await updateLoan(next, loan))) throw loanChanged();
   await invokeNotifier({
     type: "loan_disputed",
     garage_id: garage.id,
@@ -206,7 +211,8 @@ export async function autoConfirmReturns(
   let count = 0;
   for (const loan of candidates) {
     const next: Loan = { ...loan, status: "returned" };
-    await updateLoan(next);
+    // Lost the race (owner return, dispute, a concurrent sweep): leave it.
+    if (!(await updateLoan(next, loan))) continue;
     await bumpMemberCounter(garage_id, loan.borrower_phone, "borrows_active", -1);
     await bumpMemberCounter(garage_id, loan.borrower_phone, "returns_on_time", 1);
     count++;

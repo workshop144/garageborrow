@@ -332,8 +332,56 @@ export async function getLoan(garage_id: string, loan_id: string): Promise<Loan 
   return ((r.Items ?? []) as Loan[]).find((l) => l.id === loan_id);
 }
 
-export async function updateLoan(loan: Loan): Promise<void> {
-  await putLoan(loan);
+// A loan row as stored: the shared Loan plus the return-claim and dispute
+// bookkeeping the loan routes add, and `rev`, the optimistic-lock counter.
+export type LoanRecord = Loan & {
+  return_claimed_at?: string;
+  return_claimed_by?: string;
+  disputed_at?: string;
+  dispute_reason?: string;
+  rev?: number;
+};
+
+// Replaces the loan row only if it is still the snapshot `prev` the caller
+// read (same `rev`). Returns false when another write landed in between, so
+// concurrent extend / return / dispute / auto-confirm cannot overwrite each
+// other or resurrect a returned loan.
+export async function updateLoan(next: LoanRecord, prev: LoanRecord): Promise<boolean> {
+  try {
+    await ddb().send(new PutCommand(loanReplacePut(next, prev)));
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
+}
+
+// The conditional Put behind updateLoan, also used inside transactions.
+export function loanReplacePut(
+  next: LoanRecord,
+  prev: LoanRecord,
+): {
+  TableName: string;
+  Item: Record<string, unknown> & { PK: string; SK: string };
+  ConditionExpression: string;
+  ExpressionAttributeValues?: Record<string, unknown>;
+} {
+  const prevRev = prev.rev;
+  // `next` may carry the stale rev from a spread of `prev`; always bump it.
+  const item = { ...loanRow(next), rev: (prevRev ?? 0) + 1 };
+  if (prevRev === undefined) {
+    return {
+      TableName: table(),
+      Item: item,
+      ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(rev)",
+    };
+  }
+  return {
+    TableName: table(),
+    Item: item,
+    ConditionExpression: "rev = :rev",
+    ExpressionAttributeValues: { ":rev": prevRev },
+  };
 }
 
 export async function listOverdueAutoConfirm(

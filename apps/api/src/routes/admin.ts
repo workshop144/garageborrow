@@ -40,8 +40,8 @@ import {
   putIncident,
   putInvite,
   putItem,
-  putLoan,
   putMembership,
+  updateLoan,
 } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { audit, setAuditDetails } from "../middleware/audit.js";
@@ -354,7 +354,9 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/return", async (c) => {
   }
   const ts = nowIso();
   const updated: Loan = { ...loan, status: "returned", actual_return_at: ts };
-  await putLoan(updated);
+  if (!(await updateLoan(updated, loan))) {
+    throw new ApiError("conflict", "This loan just changed; reload and try again");
+  }
   setAuditDetails(c, {
     action_type: "loan.owner_returned",
     entity_type: "item",
