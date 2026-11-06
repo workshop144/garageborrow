@@ -130,8 +130,10 @@ Per-tenant customizations live on the `Garage` record in DynamoDB:
 
 ## Roadmap
 
-- ✅ **Phase A — v1.0** — lending (instances, reservations, waitlist, returns), tier-based access, donations + pay-it-forward, image upload + auto-resize, push + SMS + in-app notifications, account deletion + 30-day undo, audit log, admin console.
-- ⏳ **Phase B — future** — visit / workshop scheduling time-slots, AI assistant ("Ask Dad's Garage"), wishlist, native app shells (iOS + Android), broader multi-tenant onboarding flow.
+Phase table: [ROADMAP.md](./ROADMAP.md). Current build state, including what is and is not deployed: [STATE.md](./STATE.md).
+
+- ✅ **Phase A — v1.0** — lending (instances, reservations, waitlist, returns), tier-based access, donations + pay-it-forward, wishlist, image upload + auto-resize, push + SMS + in-app notifications, account deletion + 30-day undo, audit log, admin console.
+- ⏸ **Phase B — future** — visit / workshop scheduling time-slots, AI assistant, native app shells (iOS + Android), broader multi-tenant onboarding flow.
 
 ## Deploy
 
