@@ -36,10 +36,13 @@ function loanChanged(): ApiError {
 loanRoutes.use("/v1/g/:garage/loans", requireAuth(), loadGarageContext());
 loanRoutes.use("/v1/g/:garage/loans/*", requireAuth(), loadGarageContext());
 
+export const MAX_LOAN_DAYS = 60;
+
 const BorrowSchema = z.object({
   item_id: z.string().min(1),
   instance_id: z.string().min(1).optional(),
-  duration_days: z.number().int().positive().optional(),
+  // Bounded: an unbounded value overflowed Date (500) or held a unit for years.
+  duration_days: z.number().int().positive().max(MAX_LOAN_DAYS).optional(),
   liability_acknowledged: z.literal(true),
 });
 

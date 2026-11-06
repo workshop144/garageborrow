@@ -78,3 +78,18 @@ describe("POST /v1/g/:garage/loans — borrow flow", () => {
     expect(body.reservation.approval_required).toBe(true);
   });
 });
+
+describe("POST /loans duration_days bounds", () => {
+  it.each([61, 1e9])("rejects duration_days=%s with 400, not a 500", async (days) => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    seedMembership(FAMILY_PHONE, "family");
+    seedItemRecord({ id: "drill", min_tier: "howdy", auto_approve_tier: "family" });
+    const res = await createApp().request(`/v1/g/${GARAGE_ID}/loans`, {
+      method: "POST",
+      headers: { ...authHeader(FAMILY_PHONE), "content-type": "application/json" },
+      body: JSON.stringify({ item_id: "drill", liability_acknowledged: true, duration_days: days }),
+    });
+    expect(res.status).toBe(400);
+  });
+});

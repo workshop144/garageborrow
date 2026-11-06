@@ -278,6 +278,9 @@ export function BorrowDrawer({
                 <span className="opacity-70">Or pick a date:</span>
                 <input
                   type="date"
+                  min={formatISO(addDays(now, 1), { representation: "date" })}
+                  // The API refuses loans longer than 60 days.
+                  max={formatISO(addDays(now, 60), { representation: "date" })}
                   value={customDate}
                   onChange={(e) => setCustomDate(e.target.value)}
                   className="mt-1 block w-full rounded-xl border border-workshop/20 dark:border-surface-light/20 bg-transparent px-3 py-2"
