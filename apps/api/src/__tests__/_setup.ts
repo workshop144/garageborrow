@@ -37,8 +37,11 @@ function keyOf(it: { PK: string; SK: string }): string {
 export function resetDdbStore(): void {
   store.items.clear();
   queryPageSize = Infinity;
+  scanPageSize = Infinity;
   afterNextScan = undefined;
   beforeNextTransact = undefined;
+  failPut = undefined;
+  batchLeaveUnprocessed = 0;
 }
 
 export function seedItem(it: Item): void {
@@ -126,8 +129,41 @@ function deepEqual(a: unknown, b: unknown): boolean {
   );
 }
 
-// ConditionExpression subset: AND-joined attribute_exists / attribute_not_exists /
-// "#name = :v" / "name = :v". A failed check throws like DynamoDB does.
+// ConditionExpression subset: OR of AND-joined clauses (no parentheses), each
+// attribute_exists / attribute_not_exists / "#name = :v" / "name <= :v" /
+// "name < :v". A failed check throws like DynamoDB does.
+function conditionHolds(
+  cur: Item | undefined,
+  expr: string,
+  values: Record<string, unknown>,
+  names: Record<string, string>,
+): boolean {
+  if (/\s+OR\s+/i.test(expr)) {
+    return expr.split(/\s+OR\s+/i).some((p) => conditionHolds(cur, p, values, names));
+  }
+  for (const raw of expr.split(/\s+AND\s+/i)) {
+    const p = raw.trim();
+    let ok: boolean;
+    const ex = /^attribute_(not_)?exists\((#?\w+)\)$/.exec(p);
+    const eq = /^(#?\w+)\s*=\s*(:\w+)$/.exec(p);
+    const lt = /^(#?\w+)\s*(<=?)\s*(:\w+)$/.exec(p);
+    if (ex && ex[2]) {
+      const has = cur !== undefined && cur[names[ex[2]] ?? ex[2]] !== undefined;
+      ok = ex[1] ? !has : has;
+    } else if (eq && eq[1] && eq[2]) {
+      ok = cur !== undefined && deepEqual(cur[names[eq[1]] ?? eq[1]], values[eq[2]]);
+    } else if (lt && lt[1] && lt[2] && lt[3]) {
+      const a = cur?.[names[lt[1]] ?? lt[1]] as number | string | undefined;
+      const b = values[lt[3]] as number | string;
+      ok = a !== undefined && (lt[2] === "<=" ? a <= b : a < b);
+    } else {
+      throw new Error(`mock: unsupported condition ${p}`);
+    }
+    if (!ok) return false;
+  }
+  return true;
+}
+
 function checkCondition(
   cur: Item | undefined,
   expr: string | undefined,
@@ -135,24 +171,10 @@ function checkCondition(
   names: Record<string, string>,
 ): void {
   if (!expr) return;
-  for (const raw of expr.split(/\s+AND\s+/i)) {
-    const p = raw.trim();
-    let ok: boolean;
-    const ex = /^attribute_(not_)?exists\((#?\w+)\)$/.exec(p);
-    const eq = /^(#?\w+)\s*=\s*(:\w+)$/.exec(p);
-    if (ex && ex[2]) {
-      const has = cur !== undefined && cur[names[ex[2]] ?? ex[2]] !== undefined;
-      ok = ex[1] ? !has : has;
-    } else if (eq && eq[1] && eq[2]) {
-      ok = cur !== undefined && deepEqual(cur[names[eq[1]] ?? eq[1]], values[eq[2]]);
-    } else {
-      throw new Error(`mock: unsupported condition ${p}`);
-    }
-    if (!ok) {
-      const err = new Error("The conditional request failed");
-      err.name = "ConditionalCheckFailedException";
-      throw err;
-    }
+  if (!conditionHolds(cur, expr, values, names)) {
+    const err = new Error("The conditional request failed");
+    err.name = "ConditionalCheckFailedException";
+    throw err;
   }
 }
 
@@ -163,11 +185,30 @@ export function setQueryPageSize(n: number): void {
   queryPageSize = n;
 }
 
+// Rows per Scan page, counted before the filter (as DynamoDB's 1 MB page is).
+let scanPageSize = Infinity;
+export function setScanPageSize(n: number): void {
+  scanPageSize = n;
+}
+
 // Runs once, right after the next Scan computes its result: lets a test make a
 // concurrent write land between a reader's Scan and its follow-up write.
 let afterNextScan: (() => void) | undefined;
 export function onNextScan(fn: () => void): void {
   afterNextScan = fn;
+}
+
+// Throws a throttling error, once, for the first Put whose item matches.
+let failPut: ((item: Item) => boolean) | undefined;
+export function failNextPut(match: (item: Item) => boolean): void {
+  failPut = match;
+}
+
+// The next BatchWrite calls leave this many requests unprocessed in total
+// (returned as UnprocessedItems), as DynamoDB does under throttling.
+let batchLeaveUnprocessed = 0;
+export function leaveBatchUnprocessed(n: number): void {
+  batchLeaveUnprocessed = n;
 }
 
 // Runs once, right before the next TransactWrite checks its conditions: lets a
@@ -246,6 +287,12 @@ export function installDdbMock(): void {
 
   mock.on(PutCommand).callsFake((input) => {
     const item = input.Item as Item;
+    if (failPut?.(item)) {
+      failPut = undefined;
+      const err = new Error("Rate exceeded");
+      err.name = "ThrottlingException";
+      throw err;
+    }
     checkCondition(
       store.items.get(keyOf(item)),
       input.ConditionExpression,
@@ -319,13 +366,21 @@ export function installDdbMock(): void {
   mock.on(ScanCommand).callsFake((input) => {
     const values = input.ExpressionAttributeValues ?? {};
     const all = Array.from(store.items.values());
-    const filtered = all.filter((it) =>
+    const startKey = input.ExclusiveStartKey as { PK: string; SK: string } | undefined;
+    const from = startKey ? all.findIndex((it) => keyOf(it) === keyOf(startKey)) + 1 : 0;
+    const page = all.slice(from, from + scanPageSize);
+    const last = page[page.length - 1];
+    const more = from + page.length < all.length && last !== undefined;
+    const filtered = page.filter((it) =>
       evalFilter(it, input.FilterExpression ?? undefined, values),
     );
     const hook = afterNextScan;
     afterNextScan = undefined;
     hook?.();
-    return Promise.resolve({ Items: filtered });
+    return Promise.resolve({
+      Items: filtered,
+      ...(more ? { LastEvaluatedKey: { PK: last.PK, SK: last.SK } } : {}),
+    });
   });
 
   mock.on(BatchWriteCommand).callsFake((input) => {
@@ -336,8 +391,14 @@ export function installDdbMock(): void {
         PutRequest?: { Item: Item };
       }>
     >;
-    for (const reqs of Object.values(tables)) {
+    const unprocessed: Record<string, unknown[]> = {};
+    for (const [tableName, reqs] of Object.entries(tables)) {
       for (const r of reqs) {
+        if (batchLeaveUnprocessed > 0) {
+          batchLeaveUnprocessed--;
+          (unprocessed[tableName] ??= []).push(r);
+          continue;
+        }
         if (r.DeleteRequest) {
           const k = `${r.DeleteRequest.Key.PK}#${r.DeleteRequest.Key.SK}`;
           store.items.delete(k);
@@ -347,7 +408,9 @@ export function installDdbMock(): void {
         }
       }
     }
-    return Promise.resolve({});
+    return Promise.resolve(
+      Object.keys(unprocessed).length > 0 ? { UnprocessedItems: unprocessed } : {},
+    );
   });
 
   mock.on(QueryCommand).callsFake((input) => {

@@ -73,6 +73,30 @@ describe("Donation accept/decline", () => {
     expect(itemRecords).toHaveLength(1);
   });
 
+  it("a double accept creates one item; the second gets 409", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    seedMembership(FAMILY_PHONE, "family");
+    seedUser(OWNER_PHONE, { display_name: "Owner" });
+    const app = createApp();
+    const donationId = await submitDonation(app);
+    const accept = (key: string) =>
+      app.request(`/v1/g/${GARAGE_ID}/admin/donations/${donationId}/decide`, {
+        method: "POST",
+        headers: {
+          ...authHeader(OWNER_PHONE),
+          "content-type": "application/json",
+          "Idempotency-Key": key,
+        },
+        body: JSON.stringify({ decision: "accept" }),
+      });
+    // Fresh keys per tap, as the web client sends them.
+    const [a, b] = await Promise.all([accept("tap-1"), accept("tap-2")]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const itemRecords = listAll().filter((it) => String(it["SK"]).startsWith("ITEM#"));
+    expect(itemRecords).toHaveLength(1);
+  });
+
   it("does not create an Item on decline", async () => {
     seedGarage();
     seedUser(FAMILY_PHONE);

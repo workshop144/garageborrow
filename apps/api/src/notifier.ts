@@ -23,11 +23,11 @@ import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "./lib/ddb.js";
 import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
-import { initSentry } from "./lib/sentry.js";
+import { captureError, initSentry } from "./lib/sentry.js";
 
 initSentry();
 import { isInQuietHours, nextEndInstant } from "./lib/quiet-hours.js";
-import { markDispatched, shouldSkipDuplicate } from "./lib/notify-dedup.js";
+import { claimDispatch, releaseDispatch } from "./lib/notify-dedup.js";
 import { reserveSlot, releaseSlot } from "./lib/spam-cap.js";
 import { deliverInapp, deliverPush, deliverSms, type ChannelMessage } from "./lib/channels.js";
 import {
@@ -39,8 +39,10 @@ import {
   listMembers,
   listWaitlist,
   listWishlistRequests,
+  type LoanRecord,
   queryAll,
 } from "./lib/repo.js";
+import { AUTO_CONFIRM_AFTER_MS, confirmClaimedReturns } from "./lib/loan-lifecycle.js";
 import { resolveItemAccess } from "@garageborrow/shared";
 import type {
   Loan,
@@ -80,62 +82,71 @@ export async function dispatch(ctx: DispatchContext): Promise<void> {
     return;
   }
 
-  // Per-(user, type, payload) dedup window.
-  if (await shouldSkipDuplicate(ctx.user.phone, ctx.type, ctx.payload, nowSec)) {
+  // Per-(user, type, payload) dedup window, claimed before anything is sent.
+  if (!(await claimDispatch(ctx.user.phone, ctx.type, ctx.payload, nowSec))) {
     logger.info({ type: ctx.type }, "notifier_dedup_skip");
     return;
   }
 
-  const slot = await reserveSlot(ctx.garage_id, ctx.user.phone);
-  if (slot.gone) {
-    logger.info({ type: ctx.type }, "notifier_skip_missing_user");
-    return;
-  }
-  if (!slot.allowed) {
-    logger.info({ type: ctx.type, count: slot.count_after }, "notifier_spam_cap_drop");
-    // Even when capped, write to the inbox so the inbox stays a complete
-    // record of what we *would* have sent.
-    await deliverInapp(buildMsg(ctx, undefined), "inapp");
-    return;
-  }
+  let sentExternally = false;
+  try {
+    const slot = await reserveSlot(ctx.garage_id, ctx.user.phone);
+    if (slot.gone) {
+      // Deleted meanwhile: leave no row keyed by their phone behind.
+      await releaseDispatch(ctx.user.phone, ctx.type, ctx.payload);
+      logger.info({ type: ctx.type }, "notifier_skip_missing_user");
+      return;
+    }
+    if (!slot.allowed) {
+      logger.info({ type: ctx.type, count: slot.count_after }, "notifier_spam_cap_drop");
+      // Even when capped, write to the inbox so the inbox stays a complete
+      // record of what we *would* have sent.
+      await deliverInapp(buildMsg(ctx, undefined), "inapp");
+      return;
+    }
 
-  const inQuiet =
-    !ctx.urgent &&
-    isInQuietHours(ctx.now, {
-      start: ctx.prefs.quiet_hours_start,
-      end: ctx.prefs.quiet_hours_end,
-    });
+    const inQuiet =
+      !ctx.urgent &&
+      isInQuietHours(ctx.now, {
+        start: ctx.prefs.quiet_hours_start,
+        end: ctx.prefs.quiet_hours_end,
+      });
 
-  if (inQuiet) {
-    const deliver_after = nextEndInstant(ctx.now, {
-      start: ctx.prefs.quiet_hours_start,
-      end: ctx.prefs.quiet_hours_end,
-    }).toISOString();
-    await deliverInapp(buildMsg(ctx, deliver_after), "inapp");
-    await markDispatched(ctx.user.phone, ctx.type, ctx.payload, nowSec);
-    return;
-  }
+    if (inQuiet) {
+      const deliver_after = nextEndInstant(ctx.now, {
+        start: ctx.prefs.quiet_hours_start,
+        end: ctx.prefs.quiet_hours_end,
+      }).toISOString();
+      await deliverInapp(buildMsg(ctx, deliver_after), "inapp");
+      return;
+    }
 
-  const msg = buildMsg(ctx, undefined);
-  const inappRecord = await deliverInapp(msg, pickInappChannel(ctx.prefs));
+    const msg = buildMsg(ctx, undefined);
+    const inappRecord = await deliverInapp(msg, pickInappChannel(ctx.prefs));
 
-  let delivered = false;
-  if (ctx.prefs.push_enabled) {
-    const count = await deliverPush(msg);
-    if (count > 0) delivered = true;
-  }
-  if (ctx.prefs.sms_enabled) {
-    await deliverSms(msg);
-    delivered = true;
-  }
+    let delivered = false;
+    if (ctx.prefs.push_enabled) {
+      const count = await deliverPush(msg);
+      if (count > 0) delivered = sentExternally = true;
+    }
+    if (ctx.prefs.sms_enabled) {
+      await deliverSms(msg);
+      delivered = sentExternally = true;
+    }
 
-  await markDispatched(ctx.user.phone, ctx.type, ctx.payload, nowSec);
-
-  if (!delivered) {
-    // No external channel worked; we still have the inbox record but want
-    // to release the spam slot we burned on a no-op send.
-    await releaseSlot(ctx.garage_id, ctx.user.phone);
-    logger.info({ type: ctx.type, inapp_id: inappRecord.id }, "notifier_inapp_only");
+    if (!delivered) {
+      // No external channel worked; we still have the inbox record but want
+      // to release the spam slot we burned on a no-op send.
+      await releaseSlot(ctx.garage_id, ctx.user.phone);
+      logger.info({ type: ctx.type, inapp_id: inappRecord.id }, "notifier_inapp_only");
+    }
+  } catch (err) {
+    // Nothing reached the member's phone yet: let a retry deliver. Once a
+    // push or SMS went out, keep the claim so a retry cannot repeat it.
+    if (!sentExternally) {
+      await releaseDispatch(ctx.user.phone, ctx.type, ctx.payload).catch(() => undefined);
+    }
+    throw err;
   }
 }
 
@@ -214,6 +225,10 @@ const COPY: Record<string, { title: string; body: string }> = {
   hard_delete_warning: {
     title: "Final notice",
     body: "Your account will be permanently deleted in 7 days. Reply STOP to keep it.",
+  },
+  borrow_request_pending: {
+    title: "Someone wants to borrow something",
+    body: "A member asked to borrow or reserve a tool. Open the app to approve or decline.",
   },
   borrow_request_decided: {
     title: "Borrow request update",
@@ -334,6 +349,27 @@ interface CronCounts {
   overdue_2d: number;
   reservations_tomorrow: number;
   wishlist_digests: number;
+  returns_confirmed: number;
+  // Steps that threw and were skipped (logged and sent to Sentry).
+  failures: number;
+}
+
+// One failing step (a throttled read, a bad row, a channel error) is logged
+// and reported, and the sweep carries on with the next loan or garage instead
+// of abandoning every reminder after it.
+async function isolated(
+  step: string,
+  garage_id: string,
+  fn: () => Promise<void>,
+): Promise<boolean> {
+  try {
+    await fn();
+    return true;
+  } catch (err) {
+    logger.error({ err, step, garage_id }, "notifier_cron_step_failed");
+    captureError(err, { step, garage_id });
+    return false;
+  }
 }
 
 export async function runCronSweep(opts: CronOptions): Promise<CronCounts> {
@@ -342,51 +378,90 @@ export async function runCronSweep(opts: CronOptions): Promise<CronCounts> {
     overdue_2d: 0,
     reservations_tomorrow: 0,
     wishlist_digests: 0,
+    returns_confirmed: 0,
+    failures: 0,
   };
   const garages = opts.garage_ids ?? (await listAllGarageIds());
   const now = opts.now;
+  const step = async (name: string, garage_id: string, fn: () => Promise<void>) => {
+    if (!(await isolated(name, garage_id, fn))) counts.failures++;
+  };
   for (const garage_id of garages) {
-    const loans = await listLoansByGarage(garage_id);
-    const today = now.toISOString().slice(0, 10);
-    const twoDaysAgo = new Date(now.getTime() - 2 * ONE_DAY_MS).toISOString().slice(0, 10);
-    const tomorrow = new Date(now.getTime() + ONE_DAY_MS).toISOString().slice(0, 10);
+    await step("garage", garage_id, () => sweepGarage(garage_id, now, counts, step));
+  }
+  return counts;
+}
 
-    for (const loan of loans) {
-      if (loan.status !== "active") continue;
-      const dueDate = loan.expected_return_at.slice(0, 10);
-      if (dueDate === today) {
+async function sweepGarage(
+  garage_id: string,
+  now: Date,
+  counts: CronCounts,
+  step: (name: string, garage_id: string, fn: () => Promise<void>) => Promise<void>,
+): Promise<void> {
+  // Close claimed returns past the 48h dispute window first, so their
+  // borrowers get no "due back" reminders and the next waiter hears.
+  await step("auto_confirm", garage_id, async () => {
+    const confirmed = await confirmClaimedReturns(garage_id, now.getTime() - AUTO_CONFIRM_AFTER_MS);
+    counts.returns_confirmed += confirmed.length;
+    for (const loan of confirmed) {
+      await step("waitlist", garage_id, () =>
+        fanOutWaitlist(
+          { type: "waitlist_unblocked", garage_id, payload: { item_id: loan.item_id } },
+          now,
+        ),
+      );
+    }
+  });
+
+  const loans: LoanRecord[] = await listLoansByGarage(garage_id);
+  const today = now.toISOString().slice(0, 10);
+  const twoDaysAgo = new Date(now.getTime() - 2 * ONE_DAY_MS).toISOString().slice(0, 10);
+  const tomorrow = new Date(now.getTime() + ONE_DAY_MS).toISOString().slice(0, 10);
+
+  for (const loan of loans) {
+    if (loan.status !== "active") continue;
+    // Handed back (claim inside the dispute window): nothing to remind about.
+    if (loan.return_claimed_at || loan.actual_return_at) continue;
+    const dueDate = loan.expected_return_at.slice(0, 10);
+    if (dueDate === today) {
+      await step("loan_due_today", garage_id, async () => {
         await dispatchLoanReminder(garage_id, loan, "loan_due_today", now);
         counts.due_today++;
-      } else if (dueDate === twoDaysAgo) {
+      });
+    } else if (dueDate === twoDaysAgo) {
+      await step("loan_overdue_2d", garage_id, async () => {
         await dispatchLoanReminder(garage_id, loan, "loan_overdue_2d", now);
         counts.overdue_2d++;
-      }
+      });
     }
+  }
 
+  await step("reservations_tomorrow", garage_id, async () => {
     const reservations = await listReservationsForDate(garage_id, tomorrow);
     for (const res of reservations) {
       if (res.status !== "approved") continue;
-      const user = await getUser(garage_id, res.borrower_phone);
-      if (!user) continue;
-      await dispatch({
-        user,
-        garage_id,
-        prefs: user.notification_prefs,
-        type: "reservation_tomorrow",
-        title: "Heads up — pickup tomorrow",
-        body: `Reservation starts tomorrow. Text Dad to coordinate pickup.`,
-        payload: { reservation_id: res.id, item_id: res.item_id, start_at: res.start_at },
-        urgent: false,
-        now,
+      await step("reservation_tomorrow", garage_id, async () => {
+        const user = await getUser(garage_id, res.borrower_phone);
+        if (!user) return;
+        await dispatch({
+          user,
+          garage_id,
+          prefs: user.notification_prefs,
+          type: "reservation_tomorrow",
+          title: "Heads up — pickup tomorrow",
+          body: `Reservation starts tomorrow. Text the owner to coordinate pickup.`,
+          payload: { reservation_id: res.id, item_id: res.item_id, start_at: res.start_at },
+          urgent: false,
+          now,
+        });
+        counts.reservations_tomorrow++;
       });
-      counts.reservations_tomorrow++;
     }
+  });
 
-    if (await dispatchWishlistDigest(garage_id, now)) {
-      counts.wishlist_digests++;
-    }
-  }
-  return counts;
+  await step("wishlist_digest", garage_id, async () => {
+    if (await dispatchWishlistDigest(garage_id, now)) counts.wishlist_digests++;
+  });
 }
 
 // Digest of wishlist requests created in the last 24h, sent to the owner
@@ -454,20 +529,27 @@ async function dispatchLoanReminder(
   });
 }
 
+// Scan pages hold at most 1 MB before the filter, and the table is mostly
+// loans, audit and notification rows, so follow LastEvaluatedKey to the end.
 async function listAllGarageIds(): Promise<string[]> {
-  const r = await ddb().send(
-    new ScanCommand({
-      TableName: env.tableName(),
-      FilterExpression: "SK = :meta",
-      ExpressionAttributeValues: { ":meta": "META" },
-      ProjectionExpression: "PK",
-    }),
-  );
   const ids: string[] = [];
-  for (const it of r.Items ?? []) {
-    const pk = (it as { PK?: string }).PK;
-    if (pk && pk.startsWith("TENANT#")) ids.push(pk.slice("TENANT#".length));
-  }
+  let start: Record<string, unknown> | undefined;
+  do {
+    const r = await ddb().send(
+      new ScanCommand({
+        TableName: env.tableName(),
+        FilterExpression: "SK = :meta",
+        ExpressionAttributeValues: { ":meta": "META" },
+        ProjectionExpression: "PK",
+        ...(start ? { ExclusiveStartKey: start } : {}),
+      }),
+    );
+    for (const it of r.Items ?? []) {
+      const pk = (it as { PK?: string }).PK;
+      if (pk && pk.startsWith("TENANT#")) ids.push(pk.slice("TENANT#".length));
+    }
+    start = r.LastEvaluatedKey;
+  } while (start);
   return ids;
 }
 

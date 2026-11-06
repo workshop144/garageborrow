@@ -669,6 +669,8 @@ Resources:
                 - dynamodb:Query
                 - dynamodb:Scan
                 - dynamodb:BatchGetItem
+                # releaseDispatch() deletes the dedup claim when a send fails.
+                - dynamodb:DeleteItem
               Resource:
                 - !GetAtt GarageBorrowTable.Arn
                 - !Sub ${GarageBorrowTable.Arn}/index/*

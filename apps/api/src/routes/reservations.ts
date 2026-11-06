@@ -48,6 +48,7 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
     end_at: body.end_at,
     status: approvalRequired ? "pending" : "approved",
     approval_required: approvalRequired,
+    source: "reserve",
   });
   const check = { item, instanceId: body.instance_id, borrowerPhone: user.phone, window };
   let reservation: Reservation;
@@ -59,11 +60,12 @@ reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
     reservation = await commitAvailable(check, build, reservationRow);
   }
   if (approvalRequired) {
+    // The owner decides (POST /admin/reservations/:id/decide); the member hears then.
     await invokeNotifier({
-      type: "reservation_decided",
+      type: "borrow_request_pending",
       garage_id: garage.id,
-      user_phone: user.phone,
-      payload: { reservation_id: reservation.id, status: "pending" },
+      user_phone: garage.owner_phone,
+      payload: { reservation_id: reservation.id, item_id: item.id, kind: "reservation" },
     });
   }
   return c.json({ reservation, created_at: nowIso() }, 201);

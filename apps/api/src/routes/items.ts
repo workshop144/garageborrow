@@ -7,7 +7,9 @@ import { z } from "zod";
 import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
+import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
+import { PhotoKey } from "../lib/photo-key.js";
 import {
   getItem,
   listAllInstancesInGarage,
@@ -211,6 +213,9 @@ const ItemCreateSchema = ItemSchema.omit({
   retired_at: true,
 }).extend({
   status: ItemStatusSchema.optional(),
+  // The web renders only uploads/ keys, so refuse anything else here rather
+  // than store a photo that silently never shows.
+  primary_photo_key: PhotoKey,
 });
 
 itemRoutes.use("/v1/g/:garage/items", idempotency());
@@ -236,6 +241,7 @@ itemRoutes.post("/v1/g/:garage/items", ownerOnly(), async (c) => {
 });
 
 const ItemPatchSchema = patchSchemaOf(ItemCreateSchema);
+const LENDABLE_STATUS = new Set<ItemStatus>(["available", "partial_loaned"]);
 itemRoutes.patch("/v1/g/:garage/items/:id", ownerOnly(), async (c) => {
   const garage = mustGarage(c);
   const itemId = c.req.param("id");
@@ -248,6 +254,14 @@ itemRoutes.patch("/v1/g/:garage/items/:id", ownerOnly(), async (c) => {
     if (v !== undefined) (merged as unknown as Record<string, unknown>)[k] = v;
   }
   await putItem(merged);
+  // Back in service: tell the first eligible waiter.
+  if (LENDABLE_STATUS.has(merged.status) && !LENDABLE_STATUS.has(existing.status)) {
+    await invokeNotifier({
+      type: "waitlist_unblocked",
+      garage_id: garage.id,
+      payload: { item_id: merged.id },
+    });
+  }
   return c.json({ item: merged });
 });
 
@@ -362,7 +376,7 @@ const IncidentCreateSchema = z.object({
   loan_id: z.string().min(1),
   type: z.enum(["damage", "loss", "malfunction"]),
   description: z.string().min(1),
-  photo_keys: z.array(z.string().min(1)).default([]),
+  photo_keys: z.array(PhotoKey).max(10).default([]),
   suggested_action: z.string().optional(),
 });
 

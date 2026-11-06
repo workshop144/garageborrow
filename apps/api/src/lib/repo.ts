@@ -332,28 +332,77 @@ export async function getLoan(garage_id: string, loan_id: string): Promise<Loan 
   return ((r.Items ?? []) as Loan[]).find((l) => l.id === loan_id);
 }
 
-export async function updateLoan(loan: Loan): Promise<void> {
-  await putLoan(loan);
+// A loan row as stored: the shared Loan plus the return-claim and dispute
+// bookkeeping the loan routes add, and `rev`, the optimistic-lock counter.
+export type LoanRecord = Loan & {
+  return_claimed_at?: string;
+  return_claimed_by?: string;
+  disputed_at?: string;
+  dispute_reason?: string;
+  rev?: number;
+};
+
+// Replaces the loan row only if it is still the snapshot `prev` the caller
+// read (same `rev`). Returns false when another write landed in between, so
+// concurrent extend / return / dispute / auto-confirm cannot overwrite each
+// other or resurrect a returned loan.
+export async function updateLoan(next: LoanRecord, prev: LoanRecord): Promise<boolean> {
+  try {
+    await ddb().send(new PutCommand(loanReplacePut(next, prev)));
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
+    throw err;
+  }
 }
 
+// The conditional Put behind updateLoan, also used inside transactions.
+export function loanReplacePut(
+  next: LoanRecord,
+  prev: LoanRecord,
+): {
+  TableName: string;
+  Item: Record<string, unknown> & { PK: string; SK: string };
+  ConditionExpression: string;
+  ExpressionAttributeValues?: Record<string, unknown>;
+} {
+  const prevRev = prev.rev;
+  // `next` may carry the stale rev from a spread of `prev`; always bump it.
+  const item = { ...loanRow(next), rev: (prevRev ?? 0) + 1 };
+  if (prevRev === undefined) {
+    return {
+      TableName: table(),
+      Item: item,
+      ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(rev)",
+    };
+  }
+  return {
+    TableName: table(),
+    Item: item,
+    ConditionExpression: "rev = :rev",
+    ExpressionAttributeValues: { ":rev": prevRev },
+  };
+}
+
+// Out loans whose return was claimed before the cutoff and not disputed.
+// (active or overdue: an overdue loan's claim confirms the same way.)
 export async function listOverdueAutoConfirm(
   garage_id: string,
   cutoffIso: string,
-): Promise<Loan[]> {
+): Promise<LoanRecord[]> {
   const r = await queryAll({
     TableName: table(),
     KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
-    FilterExpression:
-      "#status = :active AND attribute_exists(return_claimed_at) AND return_claimed_at < :cutoff",
-    ExpressionAttributeNames: { "#status": "status" },
+    FilterExpression: "attribute_exists(return_claimed_at) AND return_claimed_at < :cutoff",
     ExpressionAttributeValues: {
       ":pk": `TENANT#${garage_id}`,
       ":sk": "LOAN#",
-      ":active": "active",
       ":cutoff": cutoffIso,
     },
   });
-  return (r.Items ?? []) as Loan[];
+  return ((r.Items ?? []) as LoanRecord[]).filter(
+    (l) => (l.status === "active" || l.status === "overdue") && !l.disputed_at,
+  );
 }
 
 // ─────────────────────────── Reservation ──────────────────────
@@ -392,6 +441,19 @@ export async function getItemLockVersion(garage_id: string, item_id: string): Pr
   return ((r.Item as { version?: number } | undefined)?.version ?? 0) as number;
 }
 
+export interface RowCondition {
+  ConditionExpression: string;
+  ExpressionAttributeNames?: Record<string, string>;
+  ExpressionAttributeValues?: Record<string, unknown>;
+}
+
+// A pending reservation, written only while it is still pending.
+export const STILL_PENDING: RowCondition = {
+  ConditionExpression: "#status = :pending",
+  ExpressionAttributeNames: { "#status": "status" },
+  ExpressionAttributeValues: { ":pending": "pending" },
+};
+
 // Writes `row` and bumps the item's lock from `seenVersion`. Returns false when
 // another commitment for this item landed since the version was read.
 export async function commitWithItemLock(
@@ -399,6 +461,8 @@ export async function commitWithItemLock(
   item_id: string,
   seenVersion: number,
   row: Record<string, unknown> & { PK: string; SK: string },
+  // Condition on the row write; the default insists the row is new.
+  rowCondition: RowCondition = { ConditionExpression: "attribute_not_exists(PK)" },
 ): Promise<boolean> {
   const lock = itemLockKey(garage_id, item_id);
   try {
@@ -421,7 +485,7 @@ export async function commitWithItemLock(
             Put: {
               TableName: table(),
               Item: row,
-              ConditionExpression: "attribute_not_exists(PK)",
+              ...rowCondition,
             },
           },
         ],
@@ -430,6 +494,63 @@ export async function commitWithItemLock(
     return true;
   } catch (err) {
     if ((err as { name?: string }).name === "TransactionCanceledException") return false;
+    throw err;
+  }
+}
+
+// Replaces a loan (conditional on its rev, see updateLoan) and bumps the
+// item's lock from `seenVersion` in one transaction. False when either moved.
+export async function replaceLoanWithItemLock(
+  garage_id: string,
+  item_id: string,
+  seenVersion: number,
+  next: LoanRecord,
+  prev: LoanRecord,
+): Promise<boolean> {
+  const lock = itemLockKey(garage_id, item_id);
+  try {
+    await ddb().send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: table(),
+              Item: { ...lock, version: seenVersion + 1 },
+              ...(seenVersion === 0
+                ? { ConditionExpression: "attribute_not_exists(PK)" }
+                : {
+                    ConditionExpression: "version = :seen",
+                    ExpressionAttributeValues: { ":seen": seenVersion },
+                  }),
+            },
+          },
+          { Put: loanReplacePut(next, prev) },
+        ],
+      }),
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string }).name === "TransactionCanceledException") return false;
+    throw err;
+  }
+}
+
+export async function getReservation(
+  garage_id: string,
+  reservation_id: string,
+): Promise<Reservation | undefined> {
+  return (await listReservationsByGarage(garage_id)).find((r) => r.id === reservation_id);
+}
+
+// Decline path: replaces a reservation only while it is still pending.
+export async function putReservationIfPending(r: Reservation): Promise<boolean> {
+  try {
+    await ddb().send(
+      new PutCommand({ TableName: table(), Item: reservationRow(r), ...STILL_PENDING }),
+    );
+    return true;
+  } catch (err) {
+    if (isConditionFailure(err)) return false;
     throw err;
   }
 }
@@ -480,6 +601,47 @@ export async function deleteWaitlist(
 export async function putDonation(d: DonationOffer): Promise<void> {
   const k = donationKey(d.garage_id, d.created_at.slice(0, 10), d.id);
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, d) }));
+}
+
+const DONATION_PENDING: RowCondition = {
+  ConditionExpression: "#status = :pending",
+  ExpressionAttributeNames: { "#status": "status" },
+  ExpressionAttributeValues: { ":pending": "pending" },
+};
+
+// Records the owner's decision only while the offer is still pending. On
+// accept, the new item and the decided offer land in one transaction, so a
+// double submit or a failure halfway cannot create two items for one offer.
+// Returns false when the offer was already decided.
+export async function decideDonation(d: DonationOffer, newItem?: Item): Promise<boolean> {
+  const dk = donationKey(d.garage_id, d.created_at.slice(0, 10), d.id);
+  const donationPut = { TableName: table(), Item: withKey(dk, d), ...DONATION_PENDING };
+  try {
+    if (!newItem) {
+      await ddb().send(new PutCommand(donationPut));
+      return true;
+    }
+    const ik = itemKey(newItem.garage_id, newItem.id);
+    await ddb().send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: table(),
+              Item: withKey(ik, newItem),
+              ConditionExpression: "attribute_not_exists(PK)",
+            },
+          },
+          { Put: donationPut },
+        ],
+      }),
+    );
+    return true;
+  } catch (err) {
+    const name = (err as { name?: string }).name;
+    if (isConditionFailure(err) || name === "TransactionCanceledException") return false;
+    throw err;
+  }
 }
 
 export async function listDonations(garage_id: string): Promise<DonationOffer[]> {

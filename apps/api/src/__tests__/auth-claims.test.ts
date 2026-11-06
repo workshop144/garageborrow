@@ -38,6 +38,8 @@ describe("claimsFromPayload", () => {
   });
 
   it("rejects an ID token issued to another client", () => {
-    expect(() => claimsFromPayload({ ...idToken, aud: "other" }, CLIENT)).toThrow(/different client/);
+    expect(() => claimsFromPayload({ ...idToken, aud: "other" }, CLIENT)).toThrow(
+      /different client/,
+    );
   });
 });

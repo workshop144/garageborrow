@@ -67,7 +67,22 @@ export async function apiRequest<T>(path: string, opts: RequestOpts = {}): Promi
   }
 
   const text = await res.text();
-  const parsed: unknown = text ? JSON.parse(text) : null;
+  // A non-JSON body (a CloudFront HTML 502, say) still becomes an ApiError
+  // built from the status, not a SyntaxError.
+  let parsed: unknown = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      if (res.ok)
+        throw new ApiError({
+          code: "bad_response",
+          message: "Unreadable response",
+          status: res.status,
+        });
+      parsed = null;
+    }
+  }
 
   if (!res.ok) {
     const env = (parsed ?? {}) as ErrorEnvelope;

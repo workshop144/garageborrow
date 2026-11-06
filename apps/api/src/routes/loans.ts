@@ -7,14 +7,16 @@ import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
-import { assertAvailable, commitAvailable } from "../lib/availability.js";
+import { assertAvailable, commitAvailable, commitLoanExtension } from "../lib/availability.js";
 import { LIABILITY_COPY_VERSION } from "../lib/liability.js";
+import { AUTO_CONFIRM_AFTER_MS, confirmClaimedReturns } from "../lib/loan-lifecycle.js";
 import { logger } from "../lib/logger.js";
 import {
   bumpMemberCounter,
   getItem,
   getLoan,
   loanRow,
+  type LoanRecord,
   putReservation,
   updateLoan,
 } from "../lib/repo.js";
@@ -26,13 +28,23 @@ import { ownerOnly } from "../middleware/owner-only.js";
 
 export const loanRoutes = new Hono<AppEnv>();
 
+// The loan changed between our read and our conditional write.
+function loanChanged(): ApiError {
+  return new ApiError("conflict", "This loan just changed; reload and try again");
+}
+
 loanRoutes.use("/v1/g/:garage/loans", requireAuth(), loadGarageContext());
 loanRoutes.use("/v1/g/:garage/loans/*", requireAuth(), loadGarageContext());
+
+export const MAX_LOAN_DAYS = 60;
+// Self-serve extensions per loan (3 days each); past that the owner decides.
+export const MAX_EXTENSIONS = 3;
 
 const BorrowSchema = z.object({
   item_id: z.string().min(1),
   instance_id: z.string().min(1).optional(),
-  duration_days: z.number().int().positive().optional(),
+  // Bounded: an unbounded value overflowed Date (500) or held a unit for years.
+  duration_days: z.number().int().positive().max(MAX_LOAN_DAYS).optional(),
   liability_acknowledged: z.literal(true),
 });
 
@@ -70,8 +82,15 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
       end_at: expectedReturnAt,
       status: "pending" as const,
       approval_required: true,
+      source: "borrow" as const,
     };
     await putReservation(reservation);
+    await invokeNotifier({
+      type: "borrow_request_pending",
+      garage_id: garage.id,
+      user_phone: garage.owner_phone,
+      payload: { reservation_id: reservation.id, item_id: item.id, kind: "borrow" },
+    });
     return c.json(
       {
         reservation,
@@ -109,7 +128,7 @@ loanRoutes.post("/v1/g/:garage/loans/:id/extend", async (c) => {
   const user = mustUser(c);
   const id = c.req.param("id");
   if (!id) throw new ApiError("bad_request", "Missing id");
-  const loan = await getLoan(garage.id, id);
+  const loan: LoanRecord | undefined = await getLoan(garage.id, id);
   if (!loan) throw new ApiError("not_found", "Loan not found");
   if (loan.borrower_phone !== user.phone) {
     throw new ApiError("forbidden", "Not your loan");
@@ -117,7 +136,13 @@ loanRoutes.post("/v1/g/:garage/loans/:id/extend", async (c) => {
   if (loan.status !== "active") {
     throw new ApiError("conflict", "Loan is not active");
   }
-  const next: Loan = {
+  if (loan.return_claimed_at) {
+    throw new ApiError("conflict", "This loan is already marked returned");
+  }
+  if (loan.extension_count >= MAX_EXTENSIONS) {
+    throw new ApiError("conflict", "This loan can't be extended again; ask the owner");
+  }
+  const next: LoanRecord = {
     ...loan,
     expected_return_at: new Date(
       new Date(loan.expected_return_at).getTime() + 3 * 86400_000,
@@ -125,7 +150,8 @@ loanRoutes.post("/v1/g/:garage/loans/:id/extend", async (c) => {
     extension_count: loan.extension_count + 1,
     last_extended_at: nowIso(),
   };
-  await updateLoan(next);
+  // Refuses when the extra days collide with someone else's reservation.
+  await commitLoanExtension(loan, next);
   await invokeNotifier({
     type: "loan_extended",
     garage_id: garage.id,
@@ -145,20 +171,37 @@ loanRoutes.post("/v1/g/:garage/loans/:id/return", async (c) => {
   const user = mustUser(c);
   const id = c.req.param("id");
   if (!id) throw new ApiError("bad_request", "Missing id");
-  const loan = await getLoan(garage.id, id);
+  const loan: LoanRecord | undefined = await getLoan(garage.id, id);
   if (!loan) throw new ApiError("not_found", "Loan not found");
   ReturnSchema.parse(await c.req.json().catch(() => ({})));
+  // Only the borrower claims a return (the owner has /admin/loans/:id/return):
+  // a claim puts the unit back on the shelf for availability.
+  if (loan.borrower_phone !== user.phone) {
+    throw new ApiError("forbidden", "Not your loan");
+  }
+  if (loan.status !== "active" && loan.status !== "overdue") {
+    throw new ApiError("conflict", "Loan is not out");
+  }
+  // A repeat would move the claim forward and restart the dispute window.
+  if (loan.return_claimed_at) {
+    throw new ApiError("conflict", "Return already claimed");
+  }
+  // The owner disputed an earlier claim: the unit stays out until the owner
+  // records the return. A fresh claim would free the unit for availability
+  // while the auto-confirm sweep (which skips disputed loans) never closes it.
+  if (loan.disputed_at) {
+    throw new ApiError("conflict", "Return disputed; the owner will record it");
+  }
   // Mark return claimed; the actual `returned` status flips after a 48h
-  // dispute window (see auto-confirm sweep). If owner returns the call,
-  // we can short-circuit. Here we record return_claimed_at on the loan.
+  // dispute window (see auto-confirm sweep) or when the owner confirms.
   const ts = nowIso();
-  const next: Loan & { return_claimed_at?: string; return_claimed_by?: string } = {
+  const next: LoanRecord = {
     ...loan,
     actual_return_at: ts,
+    return_claimed_at: ts,
+    return_claimed_by: user.phone,
   };
-  (next as { return_claimed_at?: string }).return_claimed_at = ts;
-  (next as { return_claimed_by?: string }).return_claimed_by = user.phone;
-  await updateLoan(next);
+  if (!(await updateLoan(next, loan))) throw loanChanged();
   await invokeNotifier({
     type: "loan_returned",
     garage_id: garage.id,
@@ -177,14 +220,24 @@ loanRoutes.post("/v1/g/:garage/loans/:id/dispute", ownerOnly(), async (c) => {
   const garage = mustGarage(c);
   const id = c.req.param("id");
   if (!id) throw new ApiError("bad_request", "Missing id");
-  const loan = await getLoan(garage.id, id);
+  const loan: LoanRecord | undefined = await getLoan(garage.id, id);
   if (!loan) throw new ApiError("not_found", "Loan not found");
   const body = DisputeSchema.parse(await c.req.json());
+  if ((loan.status !== "active" && loan.status !== "overdue") || !loan.return_claimed_at) {
+    throw new ApiError("conflict", "There is no return claim to dispute");
+  }
   const ts = nowIso();
-  const next: Loan & { disputed_at?: string; dispute_reason?: string } = { ...loan };
-  (next as { disputed_at?: string }).disputed_at = ts;
-  (next as { dispute_reason?: string }).dispute_reason = body.reason;
-  await updateLoan(next);
+  // Disputing says the unit is still out: drop the claim so availability
+  // counts the loan again and the auto-confirm sweep leaves it alone. A
+  // disputed loan is closed by the owner's own return, never auto-confirmed.
+  const {
+    actual_return_at: _actual,
+    return_claimed_at: _claimed,
+    return_claimed_by: _by,
+    ...rest
+  } = loan;
+  const next: LoanRecord = { ...rest, disputed_at: ts, dispute_reason: body.reason };
+  if (!(await updateLoan(next, loan))) throw loanChanged();
   await invokeNotifier({
     type: "loan_disputed",
     garage_id: garage.id,
@@ -194,22 +247,11 @@ loanRoutes.post("/v1/g/:garage/loans/:id/dispute", ownerOnly(), async (c) => {
   return c.json({ loan: next });
 });
 
-// Sweep helper exposed for the notifier/account-cleaner Lambdas (and tests):
-// after 48h of silence on a return claim, flip the loan to status=returned.
+// The notifier cron runs this per garage (see lib/loan-lifecycle.ts); kept
+// here for callers that only want the count.
 export async function autoConfirmReturns(
   garage_id: string,
-  cutoffMs = Date.now() - 48 * 3600_000,
+  cutoffMs = Date.now() - AUTO_CONFIRM_AFTER_MS,
 ): Promise<number> {
-  const cutoffIso = new Date(cutoffMs).toISOString();
-  const { listOverdueAutoConfirm } = await import("../lib/repo.js");
-  const candidates = await listOverdueAutoConfirm(garage_id, cutoffIso);
-  let count = 0;
-  for (const loan of candidates) {
-    const next: Loan = { ...loan, status: "returned" };
-    await updateLoan(next);
-    await bumpMemberCounter(garage_id, loan.borrower_phone, "borrows_active", -1);
-    await bumpMemberCounter(garage_id, loan.borrower_phone, "returns_on_time", 1);
-    count++;
-  }
-  return count;
+  return (await confirmClaimedReturns(garage_id, cutoffMs)).length;
 }

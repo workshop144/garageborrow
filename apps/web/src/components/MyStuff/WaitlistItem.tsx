@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { useLeaveWaitlistFromMyStuff } from "../../hooks/useMyStuff";
 import type { MyWaitlistEntry } from "../../hooks/useMyStuff";
+import { photoUrl } from "../../lib/photoUrl";
 
 type Props = {
   entry: MyWaitlistEntry;
@@ -20,9 +21,9 @@ export function WaitlistItem({ entry }: Props): JSX.Element {
           aria-hidden="true"
           className="h-12 w-12 flex-none overflow-hidden rounded-xl bg-workshop/10 dark:bg-surface-light/10"
         >
-          {entry.item.primary_photo_key ? (
+          {photoUrl(entry.item.primary_photo_key) ? (
             <img
-              src={entry.item.primary_photo_key}
+              src={photoUrl(entry.item.primary_photo_key)}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"

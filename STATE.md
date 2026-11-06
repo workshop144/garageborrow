@@ -1,6 +1,6 @@
 # Current Build State
 
-Last updated: 2026-11-06 by Claude (agent): dependency sweep (pnpm 9 to 12, minor bumps); v1.0 code and three security-audit runs are merged, production deploy has never run.
+Last updated: 2026-11-06 by Claude (agent): bug-fix sweep of 17 verified findings in loans, notifier, idempotency, donations, cleaner and resizer (branch `fix/bugs-2026-11-06`); production deploy has never run.
 
 ## Phase status
 
@@ -14,11 +14,17 @@ Last updated: 2026-11-06 by Claude (agent): dependency sweep (pnpm 9 to 12, mino
 ## What is true now
 
 - pnpm monorepo: `apps/web` (Vite React PWA), `apps/api` (Hono on Lambda, plus `notifier`, `image-resizer`, `account-cleaner` and Cognito custom-auth triggers), `packages/shared` (Zod schemas, DynamoDB keys, tier logic), `packages/ui`, `infra/template.yaml` (SAM, us-east-2).
-- Local checks on 2026-11-06 at `4fc36db`: lint, typecheck clean; tests 119 shared + 190 api + 129 web = 438 passing; `pnpm build` ok; `sam validate --lint` reports a valid template.
+- Local checks on 2026-11-06 on `fix/bugs-2026-11-06` (after PR #39 review fixes): lint, typecheck clean; tests 119 shared + 238 api + 136 web = 493 passing; `pnpm build` ok; `sam validate --lint` valid. The notifier's IAM policy now includes `dynamodb:DeleteItem` for `releaseDispatch()`.
 - Auth is phone-only via Cognito custom auth. Accounts are created by invite only (no self-service SignUp, PR #14). The caller's identity is the verified phone from the ID token (PR #12). One SMS per sign-in, the code is reused across challenge retries (PR #9).
 - Uploads: presigned URL signs the declared size (PR #10), per-user daily quota (PR #13), photo keys no longer carry phone numbers; `scripts/migrate-photo-keys.ts` migrates old keys (PR #18).
 - Data export is a direct download, never emailed (PR #11). Members never see donor or voter phones (PR #3).
 - Loans: last-unit commit is atomic and a closed garage blocks borrowing (PR #20).
+- Loan lifecycle (fix/bugs-2026-11-06): loan rows carry a `rev` and every replace is conditional on it (`updateLoan(next, prev)`). Only the borrower can claim a return, once; an owner dispute removes the claim so the unit counts as out again, and the borrower cannot claim a disputed loan again (only the owner's return closes it). The notifier cron auto-confirms undisputed claims older than 48h (`lib/loan-lifecycle.ts`), skips reminders for claimed loans, and settles member counters on time vs late; owner returns settle counters too and accept overdue loans. Extensions go through the availability check and the item lock, max 3 per loan. `duration_days` is capped at 60.
+- Approval-required borrows and reservations notify the owner (`borrow_request_pending`); the owner lists them at `GET /admin/reservations` and decides with `POST /admin/reservations/:id/decide`. The web app has no screen for this yet.
+- `waitlist_unblocked` now fires on owner return, cron auto-confirm and an item going back to available.
+- Notifier cron: garage discovery follows Scan pages; each garage and reminder is isolated (logged, Sentry, `counts.failures`); the dedup slot is claimed before sending and released only if nothing went out.
+- Idempotency keys are claimed before the handler (conditional in-progress marker, 60 s) and scoped by method and path. Donation accept is one TransactWrite conditional on `pending`. Photo keys must match `uploads/...` (API, including owner `POST/PATCH /items`) and the web renders only such keys. Malformed JSON is a 400.
+- Account cleaner resets counters first, queries the user partition, and retries BatchWrite UnprocessedItems. The image resizer rethrows transient errors so the async retry and its DLQ apply.
 - Wishlist (request and vote on missing gear) shipped in the original v1.0 history, even though the README listed it under Phase B.
 - Tenant name, site URL, time zone, governing law, venue and garage slug are GitHub repository variables, never code (`46e89fe`). Do not copy their values into repo files.
 - CI (`.github/workflows/ci.yml`): lint, typecheck, test, build, Lighthouse, plus `scan-secrets` via the reusable `.github/workflows/gitleaks.yml` (PR #36). `state-guard` checks that code PRs update STATE.md (added 2026-11-06).
@@ -36,6 +42,12 @@ Last updated: 2026-11-06 by Claude (agent): dependency sweep (pnpm 9 to 12, mino
 - Check that the first weekly Dependabot npm run after the pnpm 12 switch (PR #38) parses and updates the two-document pnpm 12 lockfile (leading `---` env document). If it fails, open an issue; do not revert pnpm.
 - Before the Phase 3 first deploy: run `deploy.yml` by workflow_dispatch or `sam build` locally under pnpm 12, and check that sharp's linux binaries still end up in the Lambda bundle now that only esbuild may run install scripts.
 - `packages/shared` has no vitest config, so after `pnpm build` its test run also picks up compiled tests in `dist/__tests__` (119 becomes 238). Harmless but misleading; fix with a vitest config that excludes `dist`.
+
+- Owner UI for pending borrow/reservation requests (list + approve/decline) is not built; the API endpoints exist.
+- Approving a borrow-sourced pending request (`source="borrow"`) only makes an approved reservation; `POST /loans` still sends approval-required items down the pending path even when the caller holds that approved reservation, so the member cannot turn it into a loan. Fix with the owner UI: either approve creates the Loan directly, or `POST /loans` skips approval for a caller holding an approved reservation covering now (PR #39 review).
+- Owner return and the auto-confirm sweep write the loan and then `settleReturnCounters` separately; if a counter bump fails after the loan write, `borrows_active` and on-time/late counters drift and are not retried. Low priority: move the bumps into the loan's TransactWrite (PR #39 review).
+- Lambda IAM policies are not checked against the DynamoDB commands each function sends (the in-memory mock has no IAM). A lint that maps command types to IAM actions per function would have caught the missing notifier `DeleteItem`.
+- The api tests do not stub the Lambda client by default, so routes that call `invokeNotifier` go to the real SDK client (the failure is caught and logged). New tests use `__tests__/_notifier-spy.ts`; consider installing it for every test file.
 
 ## Next
 

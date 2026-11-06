@@ -36,6 +36,10 @@ function respondWithError(c: Context<AppEnv>, err: unknown): Response {
     const apiErr = new ApiError("bad_request", "Validation failed", z.flattenError(err));
     return c.json(toEnvelope(apiErr), 400);
   }
+  // c.req.json() on a truncated or non-JSON body: the client's mistake.
+  if (err instanceof SyntaxError && /JSON/i.test(err.message)) {
+    return c.json(toEnvelope(new ApiError("bad_request", "Invalid JSON body")), 400);
+  }
   logger.error({ err }, "unhandled_error");
   captureError(err, { path: c.req.path, method: c.req.method });
   const fallback = new ApiError("internal_error", "Something broke.");

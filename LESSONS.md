@@ -2,6 +2,8 @@
 
 One line per lesson, newest first.
 
+- 2026-11-06: The 48h return auto-confirm existed and had tests, but nothing scheduled it, so claimed returns stayed active forever and reminders kept firing. Rule: every sweep helper is called from a scheduled entry point and has a test through that entry point (fix/bugs-2026-11-06).
+- 2026-11-06: Loan, donation and idempotency writes were read-check-then-unconditional-Put, so concurrent requests lost updates or ran twice. Rule: a state transition is a conditional write on the state that was read (`rev`, `#status = :expected`, `attribute_not_exists`), and a lost race is a 409 (fix/bugs-2026-11-06).
 - 2026-11-06: pnpm 12 runs dependency install scripts only for packages in `allowBuilds` (pnpm-workspace.yaml); everything else is skipped, and the install fails with ERR_PNPM_IGNORED_BUILDS when a package needs its script. Rule: a new native dependency gets added to `allowBuilds` in the same PR (PR #38).
 - 2026-11-06: The repo had no STATE.md, so "is it deployed?" needed a trip through workflow runs (Deploy is always skipped). Rule: STATE.md records deploy status, and code PRs update it (CI `state-guard`).
 - 2026-11-01: Dependabot opened Tailwind 3 to 4 as a plain bump (PR #30); v4 changes the config model. Rule: framework majors with migration guides get closed and done as a planned change, not auto-merged.

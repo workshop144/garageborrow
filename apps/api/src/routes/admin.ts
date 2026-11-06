@@ -17,6 +17,7 @@ import type {
   Item,
   ItemStatus,
   Loan,
+  Reservation,
 } from "@garageborrow/shared";
 import { z } from "zod";
 
@@ -25,6 +26,7 @@ import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
+import { PhotoKey } from "../lib/photo-key.js";
 import {
   deleteInvite,
   getIncident,
@@ -40,9 +42,18 @@ import {
   putIncident,
   putInvite,
   putItem,
-  putLoan,
   putMembership,
+  type LoanRecord,
+  getItem,
+  getReservation,
+  listReservationsByGarage,
+  putReservationIfPending,
+  reservationRow,
+  STILL_PENDING,
+  updateLoan,
 } from "../lib/repo.js";
+import { commitAvailable } from "../lib/availability.js";
+import { settleReturnCounters } from "../lib/loan-lifecycle.js";
 import type { AppEnv } from "../lib/types.js";
 import { audit, setAuditDetails } from "../middleware/audit.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -347,14 +358,19 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/return", async (c) => {
   const garage = mustGarage(c);
   const id = c.req.param("id");
   if (!id) throw new ApiError("bad_request", "Missing loan id");
-  const loan = await getLoan(garage.id, id);
+  const loan: LoanRecord | undefined = await getLoan(garage.id, id);
   if (!loan) throw new ApiError("not_found", "Loan not found");
-  if (loan.status !== "active") {
-    throw new ApiError("conflict", "Loan is not active");
+  if (loan.status !== "active" && loan.status !== "overdue") {
+    throw new ApiError("conflict", "Loan is not out");
   }
   const ts = nowIso();
-  const updated: Loan = { ...loan, status: "returned", actual_return_at: ts };
-  await putLoan(updated);
+  // Keep the borrower's claim time when there is one: that is when it came back.
+  const returnedAt = loan.return_claimed_at ? (loan.actual_return_at ?? ts) : ts;
+  const updated: LoanRecord = { ...loan, status: "returned", actual_return_at: returnedAt };
+  if (!(await updateLoan(updated, loan))) {
+    throw new ApiError("conflict", "This loan just changed; reload and try again");
+  }
+  await settleReturnCounters(loan, returnedAt);
   setAuditDetails(c, {
     action_type: "loan.owner_returned",
     entity_type: "item",
@@ -367,6 +383,11 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/return", async (c) => {
     garage_id: garage.id,
     user_phone: loan.borrower_phone,
     payload: { loan_id: loan.id, claimed_at: ts, by: "owner" },
+  });
+  await invokeNotifier({
+    type: "waitlist_unblocked",
+    garage_id: garage.id,
+    payload: { item_id: loan.item_id },
   });
   return c.json({ loan: updated });
 });
@@ -392,6 +413,87 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/remind", async (c) => {
     payload: { loan_id: loan.id, expected_return_at: loan.expected_return_at },
   });
   return c.json({ status: "queued" });
+});
+
+// ─────────────────────────── Pending requests ────────────────────
+//
+// Borrows and reservations that need approval wait as pending reservations.
+// The owner lists them and approves (which takes a unit, atomically, like an
+// auto-approved reservation) or declines; the member is told either way.
+
+adminRoutes.get("/v1/g/:garage/admin/reservations", async (c) => {
+  const garage = mustGarage(c);
+  const status = c.req.query("status") ?? "pending";
+  const all = await listReservationsByGarage(garage.id);
+  const rows = all.filter((r) => r.status === status);
+  rows.sort((a, b) => a.start_at.localeCompare(b.start_at));
+  return c.json({ reservations: rows });
+});
+
+const ReservationDecideSchema = z.discriminatedUnion("decision", [
+  z.object({ decision: z.literal("approve") }),
+  z.object({ decision: z.literal("decline"), decline_reason: z.string().max(500).optional() }),
+]);
+
+adminRoutes.use("/v1/g/:garage/admin/reservations/:id/decide", idempotency());
+adminRoutes.post("/v1/g/:garage/admin/reservations/:id/decide", async (c) => {
+  const garage = mustGarage(c);
+  const owner = c.get("user");
+  const id = c.req.param("id");
+  if (!id) throw new ApiError("bad_request", "Missing reservation id");
+  const body = ReservationDecideSchema.parse(await c.req.json());
+  const res = await getReservation(garage.id, id);
+  if (!res) throw new ApiError("not_found", "Reservation not found");
+  if (res.status !== "pending") {
+    throw new ApiError("conflict", `Reservation already ${res.status}`);
+  }
+  const ts = nowIso();
+  const decided = { decided_at: ts, ...(owner ? { decided_by_phone: owner.phone } : {}) };
+  let updated: Reservation;
+  if (body.decision === "approve") {
+    const item = await getItem(garage.id, res.item_id);
+    if (!item) throw new ApiError("not_found", "Item not found");
+    updated = await commitAvailable(
+      {
+        item,
+        instanceId: res.instance_id,
+        borrowerPhone: res.borrower_phone,
+        window: { start: Date.parse(res.start_at), end: Date.parse(res.end_at) },
+      },
+      (instanceId): Reservation => ({
+        ...res,
+        ...(instanceId ? { instance_id: instanceId } : {}),
+        status: "approved",
+        ...decided,
+      }),
+      reservationRow,
+      STILL_PENDING,
+    );
+  } else {
+    updated = {
+      ...res,
+      status: "declined",
+      ...decided,
+      ...(body.decline_reason ? { decline_reason: body.decline_reason } : {}),
+    };
+    if (!(await putReservationIfPending(updated))) {
+      throw new ApiError("conflict", "Reservation already decided");
+    }
+  }
+  setAuditDetails(c, {
+    action_type: `reservation.${updated.status}`,
+    entity_type: "item",
+    entity_id: res.item_id,
+    before_snapshot: res,
+    after_snapshot: updated,
+  });
+  await invokeNotifier({
+    type: res.source === "borrow" ? "borrow_request_decided" : "reservation_decided",
+    garage_id: garage.id,
+    user_phone: res.borrower_phone,
+    payload: { reservation_id: res.id, item_id: res.item_id, status: updated.status },
+  });
+  return c.json({ reservation: updated });
 });
 
 // ─────────────────────────── Audit log ───────────────────────────
@@ -442,7 +544,8 @@ const BulkItemRowSchema = z
     name: z.string().min(1),
     category: z.string().min(1),
     description: z.string().optional(),
-    primary_photo_key: z.string().optional(),
+    // CSV cells come through as "" when empty.
+    primary_photo_key: PhotoKey.or(z.literal("")).optional(),
     handling_notes: z.string().optional(),
     default_duration_days: z.coerce.number().int().positive().optional(),
     requires_approval: z.coerce.boolean().optional(),
