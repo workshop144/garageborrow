@@ -1,11 +1,21 @@
 [extend]
 useDefault = true
 
-[allowlist]
-description = "Documented example secrets used in repo hardening verification steps"
+# Allows only the documented example key from docs/deploy.md's push-protection
+# check (no default rule matches it today; this keeps it quiet if one ever does).
+#
+# Do NOT add `paths` here, or to any per-rule allowlist either (S4-2). In a
+# global allowlist, paths and regexes are ORed, so
+# `paths = ['docs/deploy\.md']` exempted the whole deploy playbook from every
+# rule. `condition = "AND"` does not help either: gitleaks 8.30.1 still
+# skips every file matching a global allowlist's paths before any rule runs
+# (checked 2026-11-06). Per-rule paths are banned on purpose too: they hide the
+# whole file from that rule. scripts/gitleaks-config-test.sh fails on any
+# `paths` key and if a real-shaped key in docs/deploy.md stops being reported.
+[[allowlists]]
+description = "Documented example AWS key (docs/deploy.md)"
+# Anchored: allowlist regexes match the captured secret, so an unanchored
+# pattern would also hide any longer secret that merely contains this string.
 regexes = [
-  '''AKIA1234567890ABCDEF''',
-]
-paths = [
-  '''docs/deploy\.md''',
+  '''^AKIA1234567890ABCDEF$''',
 ]

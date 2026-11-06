@@ -81,6 +81,8 @@ jobs:
     uses: ./.github/workflows/gitleaks.yml
     with:
       runs-on: '["ubuntu-latest"]'
+      # S4-2: fails if the config stops reporting keys pasted into docs/deploy.md.
+      config-test: scripts/gitleaks-config-test.sh
 
   state-guard:
     name: STATE.md updated with code

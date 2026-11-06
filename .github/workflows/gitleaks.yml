@@ -28,6 +28,10 @@ on:
         description: Path to a gitleaks config in the repo. Skipped (built-in rules only) if the file does not exist.
         type: string
         default: .gitleaks.toml
+      config-test:
+        description: Optional script in the repo, run with the config path after gitleaks is installed (e.g. a regression test that the config still reports keys). Empty skips it; a set path that does not exist fails.
+        type: string
+        default: ""
       gitleaks-version:
         description: gitleaks release to install (without the leading v).
         type: string
@@ -42,7 +46,7 @@ on:
         # TODO(owner): fill in the linux_arm64 sha256 for 8.30.1 from the
         # release's gitleaks_8.30.1_checksums.txt. It could not be read from a
         # package registry when this was written, and a checksum is never guessed.
-        default: ''
+        default: ""
 
 permissions:
   contents: read
@@ -99,6 +103,19 @@ jobs:
           chmod 0755 "${dir}/gitleaks"
           echo "${dir}" >> "${GITHUB_PATH}"
           "${dir}/gitleaks" version
+
+      - name: Test gitleaks config
+        if: inputs.config-test != ''
+        env:
+          GITLEAKS_CONFIG_PATH: ${{ inputs.config }}
+          GITLEAKS_CONFIG_TEST: ${{ inputs.config-test }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "${GITLEAKS_CONFIG_TEST}" ]]; then
+            echo "::error::config-test script '${GITLEAKS_CONFIG_TEST}' not found."
+            exit 1
+          fi
+          bash "${GITLEAKS_CONFIG_TEST}" "${GITLEAKS_CONFIG_PATH}"
 
       - name: Scan for secrets
         env:
