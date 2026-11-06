@@ -484,6 +484,32 @@ describe("Wishlist hides hidden and leaving members", () => {
     expect(own.body.requester_display_name).toBe("Fam");
   });
 
+  it("the garage owner still sees a hidden member's name and number", async () => {
+    seedAll();
+    seedUser(FAMILY_PHONE, { display_name: "Fam", visibility: "hidden" });
+    seedUser(FRIEND_PHONE, { display_name: "Fri", visibility: "hidden" });
+    const app = createApp();
+    const { id } = await createReq(app, FAMILY_PHONE);
+    for (const p of [FRIEND_PHONE, OWNER_PHONE]) {
+      await app.request(`/v1/g/${GARAGE_ID}/wishlist/${id}/vote`, {
+        method: "POST",
+        headers: authHeader(p),
+      });
+    }
+
+    const { body } = await detailAs(app, id, OWNER_PHONE);
+    expect(body.request.requester_phone).toBe(FAMILY_PHONE);
+    expect(body.requester_display_name).toBe("Fam");
+    expect(body.voters).toContainEqual({ phone: FRIEND_PHONE, display_name: "Fri" });
+
+    // /v1/me/wishlist applies the same owner rule per garage.
+    const res = await app.request(`/v1/me/wishlist`, { headers: authHeader(OWNER_PHONE) });
+    expect(res.status).toBe(200);
+    const items = ((await res.json()) as { items: Row[] }).items;
+    expect(items).toHaveLength(1);
+    expect(items[0]!.requester_phone).toBe(FAMILY_PHONE);
+  });
+
   it("a soft-deleted requester shows no phone digits or name", async () => {
     seedAll();
     const app = createApp();

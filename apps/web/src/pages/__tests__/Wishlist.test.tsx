@@ -205,4 +205,30 @@ describe("Wishlist photos and hidden members", () => {
     expect(container.textContent).not.toMatch(/Member \d/);
     expect(container.querySelector("img")).toBeNull();
   });
+
+  it("falls back to the last 4 digits when the owner gets a number but no name", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes("/wishlist/wish_a")) {
+        return Promise.resolve(
+          jsonResponse({
+            request: { ...SAMPLE_REQUESTS.items[0], requester_phone: "+15555550100" },
+            voters: [{ phone: "+15555550300", display_name: null }],
+            requester_display_name: null,
+          }),
+        );
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    render(
+      wrap(
+        <Routes>
+          <Route path="/wishlist/:id" element={<WishlistDetail />} />
+        </Routes>,
+        ["/wishlist/wish_a"],
+      ),
+    );
+    await waitFor(() => expect(screen.getByText("Pressure washer")).toBeInTheDocument());
+    expect(screen.getByText(/From Member 0100/)).toBeInTheDocument();
+    expect(screen.getByText("Member 0300")).toBeInTheDocument();
+  });
 });

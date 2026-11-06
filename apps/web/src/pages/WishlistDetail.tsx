@@ -9,6 +9,14 @@ import { formatRelative } from "../lib/dates";
 import { photoUrl } from "../lib/photoUrl";
 import { safeHref } from "../lib/safeHref";
 
+// The API sends a name only for members the viewer may see. With no name, the
+// owner still gets the number (a hidden or departed member), so show its last
+// 4 digits; anyone else gets no phone and sees "A neighbor".
+function personLabel(name: string | null | undefined, phone: string | null): string {
+  if (name) return name;
+  return phone ? `Member ${phone.slice(-4)}` : "A neighbor";
+}
+
 export default function WishlistDetail(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const detail = useWishlistRequest(id ?? "");
@@ -39,7 +47,7 @@ export default function WishlistDetail(): JSX.Element {
 
   const r = detail.data.request;
   const voters = detail.data.voters;
-  const requesterName = detail.data.requester_display_name ?? "A neighbor";
+  const requesterName = personLabel(detail.data.requester_display_name, r.requester_phone);
 
   const isOpen = r.status === "open";
 
@@ -127,7 +135,7 @@ export default function WishlistDetail(): JSX.Element {
         <ul className="space-y-1 text-sm">
           {voters.map((v, i) => (
             <li key={i} className="opacity-80">
-              {v.display_name ?? "A neighbor"}
+              {personLabel(v.display_name, v.phone)}
             </li>
           ))}
         </ul>

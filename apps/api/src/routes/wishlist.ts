@@ -14,6 +14,7 @@ import {
   bumpWindowCounter,
   bumpWishlistVoteCount,
   deleteWishlistVote,
+  getGarage,
   getUser,
   getUserAnyGarage,
   getWishlistRequest,
@@ -121,21 +122,31 @@ wishlistRoutes.get("/v1/me/wishlist", async (c) => {
   const primary = await getUserAnyGarage(user.phone);
   if (!primary) throw new ApiError("not_found", "User not found");
   const lookup = profileLookup();
-  const all: Array<MemberView<WishlistRequest & { my_vote: boolean }>> = [];
+  const ownerOf = new Set<string>();
+  const all: Array<WishlistRequest & { my_vote: boolean }> = [];
   for (const garageId of primary.garages_member_of) {
-    const requests = await listWishlistRequests(garageId);
-    const myVotes = await listAllWishlistVotesForVoter(garageId, user.phone);
+    const [garage, requests, myVotes] = await Promise.all([
+      getGarage(garageId),
+      listWishlistRequests(garageId),
+      listAllWishlistVotesForVoter(garageId, user.phone),
+    ]);
+    // The garage owner sees full numbers here too, as on the per-garage list.
+    if (garage?.owner_phone === user.phone) ownerOf.add(garageId);
     const mineRequestIds = new Set(myVotes.map((v) => v.request_id));
     for (const r of requests) {
       const isMine = r.requester_phone === user.phone;
       const iVoted = mineRequestIds.has(r.id);
       if (!isMine && !iVoted) continue;
-      all.push(await forViewer({ ...r, my_vote: iVoted }, user.phone, false, lookup));
+      all.push({ ...r, my_vote: iVoted });
     }
   }
   all.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  // Decorate only the returned page: each distinct phone costs a profile read.
   const { page, next_cursor } = paginate(all, params);
-  return c.json(next_cursor ? { items: page, next_cursor } : { items: page });
+  const items = await Promise.all(
+    page.map((r) => forViewer(r, user.phone, ownerOf.has(r.garage_id), lookup)),
+  );
+  return c.json(next_cursor ? { items, next_cursor } : { items });
 });
 
 // ─────────────────────── Member routes ───────────────────────
@@ -171,14 +182,14 @@ wishlistRoutes.get("/v1/g/:garage/wishlist", async (c) => {
   const mineRequestIds = new Set(myVotes.map((v) => v.request_id));
   const isOwner = garage.owner_phone === user.phone;
   const lookup = profileLookup();
-  const decorated = [];
-  for (const r of filtered) {
-    decorated.push(
-      await forViewer({ ...r, my_vote: mineRequestIds.has(r.id) }, user.phone, isOwner, lookup),
-    );
-  }
-  const { page, next_cursor } = paginate(decorated, params);
-  return c.json(next_cursor ? { items: page, next_cursor } : { items: page });
+  // Decorate only the returned page: each distinct phone costs a profile read.
+  const { page, next_cursor } = paginate(filtered, params);
+  const items = await Promise.all(
+    page.map((r) =>
+      forViewer({ ...r, my_vote: mineRequestIds.has(r.id) }, user.phone, isOwner, lookup),
+    ),
+  );
+  return c.json(next_cursor ? { items, next_cursor } : { items });
 });
 
 const CreateRequestSchema = z
@@ -263,16 +274,18 @@ wishlistRoutes.get("/v1/g/:garage/wishlist/:id", async (c) => {
   const lookup = profileLookup();
   // Voter list follows each voter's visibility: a hidden, deleted or missing
   // voter is counted but shows no name, and to other members no phone digits.
-  const voters: Array<{ phone: string | null; display_name: string | null }> = [];
-  for (const v of votes) {
-    const u = await lookup(garage.id, v.voter_phone);
-    const phone = await maskPhone(v.voter_phone, garage.id, user.phone, isOwner, lookup);
-    const named = u && (isListedProfile(u) || v.voter_phone === user.phone);
-    voters.push({ phone, display_name: named ? u.display_name : null });
-  }
+  // The garage owner sees every name and number, as in the member directory.
+  const voters = await Promise.all(
+    votes.map(async (v) => {
+      const u = await lookup(garage.id, v.voter_phone);
+      const phone = await maskPhone(v.voter_phone, garage.id, user.phone, isOwner, lookup);
+      const named = u && (isOwner || isListedProfile(u) || v.voter_phone === user.phone);
+      return { phone, display_name: named ? u.display_name : null };
+    }),
+  );
   const requester = await lookup(garage.id, req.requester_phone);
   const requesterDisplay =
-    requester && (isListedProfile(requester) || req.requester_phone === user.phone)
+    requester && (isOwner || isListedProfile(requester) || req.requester_phone === user.phone)
       ? requester.display_name
       : null;
   const myVote = votes.some((v) => v.voter_phone === user.phone);

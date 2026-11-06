@@ -14,9 +14,7 @@ export const TIER_NAMES = ["howdy", "friend", "family"] as const;
 export type TierName = (typeof TIER_NAMES)[number];
 export const TierNameSchema = z.enum(TIER_NAMES);
 
-// An object key from /v1/uploads/sign: "uploads/<kind>/<id>.<ext>" (older keys
-// carry one more path segment). No dot segments, so /img/<key> stays in /img/.
-export const PHOTO_KEY_RE = /^uploads\/[\w-]+(?:\/[\w-]+)+\.\w+$/;
+export { PHOTO_KEY_RE } from "../photo-key.js";
 
 export const NonNegInt = z.number().int().nonnegative();
 export const PosInt = z.number().int().positive();
