@@ -16,7 +16,9 @@
 // Spam ceiling: each user has a notifications_sent_today counter on their
 // user record; the notifier increments it atomically before delivery. After
 // 5 sends in a day, further notifications are dropped (still written to the
-// inbox so the user can see them). The counter is reset by account-cleaner.
+// inbox so the user can see them). borrow_request_pending has its own bucket
+// (lib/spam-cap.ts) so member requests cannot use up the owner's 5. The
+// counters are reset by account-cleaner.
 
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -90,7 +92,7 @@ export async function dispatch(ctx: DispatchContext): Promise<void> {
 
   let sentExternally = false;
   try {
-    const slot = await reserveSlot(ctx.garage_id, ctx.user.phone);
+    const slot = await reserveSlot(ctx.garage_id, ctx.user.phone, ctx.type);
     if (slot.gone) {
       // Deleted meanwhile: leave no row keyed by their phone behind.
       await releaseDispatch(ctx.user.phone, ctx.type, ctx.payload);
@@ -137,7 +139,7 @@ export async function dispatch(ctx: DispatchContext): Promise<void> {
     if (!delivered) {
       // No external channel worked; we still have the inbox record but want
       // to release the spam slot we burned on a no-op send.
-      await releaseSlot(ctx.garage_id, ctx.user.phone);
+      await releaseSlot(ctx.garage_id, ctx.user.phone, ctx.type);
       logger.info({ type: ctx.type, inapp_id: inappRecord.id }, "notifier_inapp_only");
     }
   } catch (err) {

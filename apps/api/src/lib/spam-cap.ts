@@ -13,6 +13,21 @@ import { tenantUserKey } from "@garageborrow/shared";
 
 export const DAILY_NOTIFICATION_CAP = 5;
 
+// Member-triggered borrow/reservation request pings to the owner count in
+// their own bucket, so requests from members cannot use up the owner's shared
+// 5/day budget (wishlist digests, other alerts). Reset with the main counter.
+export const BORROW_REQUEST_NOTIFICATION_CAP = 10;
+export const BORROW_REQUEST_COUNTER = "borrow_requests_notified_today";
+export const DAILY_COUNTER = "notifications_sent_today";
+// Every per-day counter attribute the account cleaner resets.
+export const DAILY_COUNTERS = [DAILY_COUNTER, BORROW_REQUEST_COUNTER] as const;
+
+function bucketFor(type: string | undefined): { attr: string; cap: number } {
+  return type === "borrow_request_pending"
+    ? { attr: BORROW_REQUEST_COUNTER, cap: BORROW_REQUEST_NOTIFICATION_CAP }
+    : { attr: DAILY_COUNTER, cap: DAILY_NOTIFICATION_CAP };
+}
+
 export interface CapResult {
   allowed: boolean;
   count_after: number;
@@ -27,8 +42,13 @@ function isConditionFailure(err: unknown): boolean {
 // Atomically bump and read the counter. If the result exceeds the cap, the
 // caller drops the notification. The counter itself is reset by
 // account-cleaner's daily sweep at user-local midnight.
-export async function reserveSlot(garage_id: string, user_phone: string): Promise<CapResult> {
+export async function reserveSlot(
+  garage_id: string,
+  user_phone: string,
+  type?: string,
+): Promise<CapResult> {
   const k = tenantUserKey(garage_id, user_phone);
+  const bucket = bucketFor(type);
   let r;
   try {
     // ADD creates a missing item, so without the condition a notification
@@ -38,8 +58,9 @@ export async function reserveSlot(garage_id: string, user_phone: string): Promis
       new UpdateCommand({
         TableName: env.tableName(),
         Key: { PK: k.pk, SK: k.sk },
-        UpdateExpression: "ADD notifications_sent_today :one",
+        UpdateExpression: "ADD #n :one",
         ConditionExpression: "attribute_exists(PK) AND attribute_not_exists(deleted_at)",
+        ExpressionAttributeNames: { "#n": bucket.attr },
         ExpressionAttributeValues: { ":one": 1 },
         ReturnValues: "UPDATED_NEW",
       }),
@@ -48,23 +69,30 @@ export async function reserveSlot(garage_id: string, user_phone: string): Promis
     if (isConditionFailure(err)) return { allowed: false, count_after: 0, gone: true };
     throw err;
   }
-  const updated = r.Attributes as { notifications_sent_today?: number } | undefined;
-  const count = updated?.notifications_sent_today ?? 1;
-  return { allowed: count <= DAILY_NOTIFICATION_CAP, count_after: count };
+  const updated = r.Attributes as Record<string, unknown> | undefined;
+  const raw = updated?.[bucket.attr];
+  const count = typeof raw === "number" ? raw : 1;
+  return { allowed: count <= bucket.cap, count_after: count };
 }
 
 // Decrement-back when delivery is skipped *after* the slot was reserved
 // (e.g., dedup hit detected after the increment). Keeps the daily ceiling
 // honest in cases where reservation happened pre-skip.
-export async function releaseSlot(garage_id: string, user_phone: string): Promise<void> {
+export async function releaseSlot(
+  garage_id: string,
+  user_phone: string,
+  type?: string,
+): Promise<void> {
   const k = tenantUserKey(garage_id, user_phone);
+  const bucket = bucketFor(type);
   try {
     await ddb().send(
       new UpdateCommand({
         TableName: env.tableName(),
         Key: { PK: k.pk, SK: k.sk },
-        UpdateExpression: "ADD notifications_sent_today :neg",
+        UpdateExpression: "ADD #n :neg",
         ConditionExpression: "attribute_exists(PK)",
+        ExpressionAttributeNames: { "#n": bucket.attr },
         ExpressionAttributeValues: { ":neg": -1 },
       }),
     );

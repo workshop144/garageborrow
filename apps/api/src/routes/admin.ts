@@ -5,6 +5,7 @@ import {
   ItemSchema,
   NonprofitOrgSchema,
   PhoneE164,
+  ReservationStatusSchema,
   TierLabelsSchema,
   TierNameSchema,
 } from "@garageborrow/shared";
@@ -48,6 +49,7 @@ import {
   getReservation,
   listReservationsByGarage,
   putReservationIfPending,
+  putReservationIfStatus,
   reservationRow,
   STILL_PENDING,
   updateLoan,
@@ -423,11 +425,14 @@ adminRoutes.post("/v1/g/:garage/admin/loans/:id/remind", async (c) => {
 
 adminRoutes.get("/v1/g/:garage/admin/reservations", async (c) => {
   const garage = mustGarage(c);
-  const status = c.req.query("status") ?? "pending";
+  const status = ReservationStatusSchema.parse(c.req.query("status") ?? "pending");
+  const params = parsePageParams(c);
   const all = await listReservationsByGarage(garage.id);
   const rows = all.filter((r) => r.status === status);
-  rows.sort((a, b) => a.start_at.localeCompare(b.start_at));
-  return c.json({ reservations: rows });
+  // Stable order (id breaks ties) so cursors page the same view across calls.
+  rows.sort((a, b) => a.start_at.localeCompare(b.start_at) || a.id.localeCompare(b.id));
+  const { page, next_cursor } = paginate(rows, params);
+  return c.json(next_cursor ? { reservations: page, next_cursor } : { reservations: page });
 });
 
 const ReservationDecideSchema = z.discriminatedUnion("decision", [
@@ -492,6 +497,54 @@ adminRoutes.post("/v1/g/:garage/admin/reservations/:id/decide", async (c) => {
     garage_id: garage.id,
     user_phone: res.borrower_phone,
     payload: { reservation_id: res.id, item_id: res.item_id, status: updated.status },
+  });
+  return c.json({ reservation: updated });
+});
+
+// The owner releases an approved reservation (for example one that holds a
+// unit too long). Conditional on the status read, so a concurrent borrower
+// cancel or a second owner click is a clean 409; a cancelled one is a no-op.
+// Pending requests are declined through /decide instead.
+adminRoutes.use("/v1/g/:garage/admin/reservations/:id/cancel", idempotency());
+adminRoutes.post("/v1/g/:garage/admin/reservations/:id/cancel", async (c) => {
+  const garage = mustGarage(c);
+  const owner = c.get("user");
+  const id = c.req.param("id");
+  if (!id) throw new ApiError("bad_request", "Missing reservation id");
+  const existing = await getReservation(garage.id, id);
+  if (!existing) throw new ApiError("not_found", "Reservation not found");
+  const {
+    PK: _pk,
+    SK: _sk,
+    GSI1PK: _gpk,
+    GSI1SK: _gsk,
+    ...res
+  } = existing as Reservation & Record<string, unknown>;
+  if (res.status === "cancelled") return c.json({ reservation: res });
+  if (res.status !== "approved") {
+    throw new ApiError("conflict", `Reservation is ${res.status}`);
+  }
+  const updated: Reservation = {
+    ...res,
+    status: "cancelled",
+    decided_at: nowIso(),
+    ...(owner ? { decided_by_phone: owner.phone } : {}),
+  };
+  if (!(await putReservationIfStatus(updated, "approved"))) {
+    throw new ApiError("conflict", "Reservation changed, reload and try again");
+  }
+  setAuditDetails(c, {
+    action_type: "reservation.cancelled_by_owner",
+    entity_type: "item",
+    entity_id: res.item_id,
+    before_snapshot: res,
+    after_snapshot: updated,
+  });
+  await invokeNotifier({
+    type: res.source === "borrow" ? "borrow_request_decided" : "reservation_decided",
+    garage_id: garage.id,
+    user_phone: res.borrower_phone,
+    payload: { reservation_id: res.id, item_id: res.item_id, status: "cancelled" },
   });
   return c.json({ reservation: updated });
 });

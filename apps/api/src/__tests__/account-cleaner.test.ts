@@ -160,12 +160,14 @@ describe("account-cleaner", () => {
     const row = all.find((r) => r.PK === userKey.pk && r.SK === userKey.sk);
     if (!row) throw new Error("seeded user not found");
     (row as Record<string, unknown>)["notifications_sent_today"] = 4;
+    (row as Record<string, unknown>)["borrow_requests_notified_today"] = 7;
     const counts = await runCleanup(new Date("2026-04-26T03:00:00Z"));
     expect(counts.counters_reset).toBe(1);
     const updated = listAll().find((r) => r.PK === userKey.pk && r.SK === userKey.sk);
     expect(
       (updated as { notifications_sent_today?: number } | undefined)?.notifications_sent_today,
     ).toBe(0);
+    expect(updated?.["borrow_requests_notified_today"]).toBe(0);
   });
 
   it("scrubs the phone from derived copies: donated items, audit snapshots, keyed rows", async () => {

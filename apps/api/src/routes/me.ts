@@ -182,8 +182,13 @@ meRoutes.post("/v1/me/join", async (c) => {
       if (own && (await updateUserFields(garageId, user.phone, { garages_member_of: garages }))) {
         continue;
       }
-      const { notifications_sent_today: _counter, ...profile } = base as User & {
+      const {
+        notifications_sent_today: _counter,
+        borrow_requests_notified_today: _requests,
+        ...profile
+      } = base as User & {
         notifications_sent_today?: number;
+        borrow_requests_notified_today?: number;
       };
       await putUser(garageId, { ...profile, garages_member_of: garages });
     }
