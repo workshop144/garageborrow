@@ -15,6 +15,7 @@ import {
   getItem,
   getLoan,
   loanRow,
+  type LoanRecord,
   putReservation,
   updateLoan,
 } from "../lib/repo.js";
@@ -150,19 +151,30 @@ loanRoutes.post("/v1/g/:garage/loans/:id/return", async (c) => {
   const user = mustUser(c);
   const id = c.req.param("id");
   if (!id) throw new ApiError("bad_request", "Missing id");
-  const loan = await getLoan(garage.id, id);
+  const loan: LoanRecord | undefined = await getLoan(garage.id, id);
   if (!loan) throw new ApiError("not_found", "Loan not found");
   ReturnSchema.parse(await c.req.json().catch(() => ({})));
+  // Only the borrower claims a return (the owner has /admin/loans/:id/return):
+  // a claim puts the unit back on the shelf for availability.
+  if (loan.borrower_phone !== user.phone) {
+    throw new ApiError("forbidden", "Not your loan");
+  }
+  if (loan.status !== "active" && loan.status !== "overdue") {
+    throw new ApiError("conflict", "Loan is not out");
+  }
+  // A repeat would move the claim forward and restart the dispute window.
+  if (loan.return_claimed_at) {
+    throw new ApiError("conflict", "Return already claimed");
+  }
   // Mark return claimed; the actual `returned` status flips after a 48h
-  // dispute window (see auto-confirm sweep). If owner returns the call,
-  // we can short-circuit. Here we record return_claimed_at on the loan.
+  // dispute window (see auto-confirm sweep) or when the owner confirms.
   const ts = nowIso();
-  const next: Loan & { return_claimed_at?: string; return_claimed_by?: string } = {
+  const next: LoanRecord = {
     ...loan,
     actual_return_at: ts,
+    return_claimed_at: ts,
+    return_claimed_by: user.phone,
   };
-  (next as { return_claimed_at?: string }).return_claimed_at = ts;
-  (next as { return_claimed_by?: string }).return_claimed_by = user.phone;
   if (!(await updateLoan(next, loan))) throw loanChanged();
   await invokeNotifier({
     type: "loan_returned",
