@@ -123,4 +123,20 @@ describe("Idempotency-Key middleware", () => {
     seedItemRecord({ id: "drill" });
     expect((await send()).status).toBe(201);
   });
+
+  it("refuses an oversized key with 400", async () => {
+    seedGarage();
+    seedUser(FAMILY_PHONE);
+    seedMembership(FAMILY_PHONE, "family");
+    const res = await createApp().request(`/v1/g/${GARAGE_ID}/loans`, {
+      method: "POST",
+      headers: {
+        ...authHeader(FAMILY_PHONE),
+        "content-type": "application/json",
+        "Idempotency-Key": "k".repeat(201),
+      },
+      body: JSON.stringify({ item_id: "drill", liability_acknowledged: true }),
+    });
+    expect(res.status).toBe(400);
+  });
 });

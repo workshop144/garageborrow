@@ -43,6 +43,10 @@ export function idempotency(): MiddlewareHandler<AppEnv> {
       await next();
       return undefined;
     }
+    // It becomes part of a DynamoDB sort key (1 KB max): refuse junk up front.
+    if (key.length > 200) {
+      throw new ApiError("bad_request", "Idempotency-Key is too long");
+    }
     const user = c.get("user");
     const phone = user?.phone ?? "anon";
     c.set("idempotency_key", key);
