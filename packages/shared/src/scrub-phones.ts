@@ -1,18 +1,22 @@
 // Replace E.164 phone numbers in text sent to third parties (Sentry). Admin
 // routes carry a member's phone in the path (/admin/members/%2B1...), and the
 // pino redaction in the API logger does not cover Sentry events, extras or
-// browser fetch breadcrumbs. Matches "+<6-15 digits>" and the URL-encoded
-// "%2B<6-15 digits>" (either case).
+// browser fetch breadcrumbs. Matches "+" followed by 6 or more digits, the
+// URL-encoded "%2B" and the double-encoded "%252B" (either case). The whole
+// digit run is replaced, so an over-long run leaves no tail behind.
 //
 // Dependency-free so the web can import it via "@garageborrow/shared/scrub-phones"
 // without pulling zod into the bundle.
 
-export const PHONE_IN_TEXT_RE = /(?:%2B|\+)\d{6,15}/gi;
+// Non-global on purpose: a shared /g regex keeps lastIndex between .test()
+// or .exec() calls. scrubPhones builds its own global copy.
+export const PHONE_IN_TEXT_RE = /(?:%(?:25)?2B|\+)\d{6,}/i;
+const PHONE_IN_TEXT_GLOBAL_RE = new RegExp(PHONE_IN_TEXT_RE.source, "gi");
 
 export const PHONE_PLACEHOLDER = "[phone]";
 
 export function scrubPhones(text: string): string {
-  return text.replace(PHONE_IN_TEXT_RE, PHONE_PLACEHOLDER);
+  return text.replace(PHONE_IN_TEXT_GLOBAL_RE, PHONE_PLACEHOLDER);
 }
 
 function isPlainObject(v: object): boolean {

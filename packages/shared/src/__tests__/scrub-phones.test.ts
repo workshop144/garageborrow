@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { scrubPhones, scrubPhonesDeep } from "../scrub-phones.js";
+import { PHONE_IN_TEXT_RE, scrubPhones, scrubPhonesDeep } from "../scrub-phones.js";
 
 describe("scrubPhones", () => {
   it("replaces raw and URL-encoded E.164 numbers", () => {
@@ -11,6 +11,17 @@ describe("scrubPhones", () => {
       "/v1/g/g1/admin/invites/[phone]",
     );
     expect(scrubPhones("/admin/invites/%2b447700900123?x=1")).toBe("/admin/invites/[phone]?x=1");
+  });
+
+  it("replaces double-encoded numbers and whole over-long digit runs", () => {
+    expect(scrubPhones("/admin/members/%252B15555550123")).toBe("/admin/members/[phone]");
+    expect(scrubPhones("id +1234567890123456 end")).toBe("id [phone] end");
+  });
+
+  it("exports a non-global regex that is safe to reuse with test()", () => {
+    expect(PHONE_IN_TEXT_RE.global).toBe(false);
+    expect(PHONE_IN_TEXT_RE.test("+15555550123")).toBe(true);
+    expect(PHONE_IN_TEXT_RE.test("+15555550123")).toBe(true);
   });
 
   it("leaves text without phones alone", () => {
