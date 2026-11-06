@@ -22,6 +22,7 @@ verify-phase-1: verify-phase-0
 verify-phase-2:
     actionlint
     gitleaks git . --config .gitleaks.toml --redact --no-banner
+    ./scripts/gitleaks-config-test.sh .gitleaks.toml
     ./scripts/state-guard.sh --self-test
 
 # Phase 3: production is live. Reads SITE_URL from the repo variable, never from code.
