@@ -7,9 +7,10 @@
 #   ./scripts/lighthouse.sh                 # uses default port 4173
 #   PORT=8080 ./scripts/lighthouse.sh       # override
 #
-# Requires: `pnpm install` (lighthouse is a pinned devDependency of apps/web,
-# so it comes from pnpm-lock.yaml under the minimumReleaseAge and allowBuilds
-# rules in pnpm-workspace.yaml; never fetch it with npx) and Chrome/Chromium
+# Requires: `pnpm install` (lighthouse is a pinned devDependency of the
+# CI-only workspace package tools/lighthouse, so it comes from pnpm-lock.yaml
+# under the minimumReleaseAge and allowBuilds rules in pnpm-workspace.yaml;
+# never fetch it with npx) and Chrome/Chromium
 # on $PATH or at $CHROME_PATH. CI installs Chrome with setup-chrome.
 set -euo pipefail
 
@@ -56,7 +57,9 @@ echo "→ running lighthouse against ${URL}"
 # root in containers; --disable-dev-shm-usage avoids /dev/shm exhaustion on
 # small runners; --disable-gpu sidesteps a class of headless rendering bugs.
 LH_EXIT=0
-( cd "${REPO_ROOT}" && pnpm --filter @garageborrow/web exec lighthouse "${URL}" \
+# Plain `pnpm exec` from the package dir passes lighthouse's exit code through;
+# `pnpm --filter ... exec` would turn every failure into 1.
+( cd "${REPO_ROOT}/tools/lighthouse" && pnpm exec lighthouse "${URL}" \
   --quiet \
   --chrome-flags="--headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu" \
   --only-categories=performance,accessibility,best-practices,seo \

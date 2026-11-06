@@ -1,0 +1,9 @@
+{
+  "name": "@garageborrow/lighthouse",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CI-only Lighthouse runner for scripts/lighthouse.sh. Kept out of the app packages so deploy.yml can install without it.",
+  "devDependencies": {
+    "lighthouse": "13.6.0"
+  }
+}
