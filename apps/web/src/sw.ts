@@ -56,11 +56,28 @@ registerRoute(
   }),
 );
 
+// Store only real images. A photo's variants appear a few seconds after the
+// upload (the resizer writes img/thumb and img/medium), and until then
+// CloudFront answers its 403 with the SPA's index.html and status 200. Caching
+// that under the image URL would leave the photo broken on this device for 30
+// days.
+const imageOnlyPlugin: StrategyPlugins = {
+  cacheWillUpdate: ({ response }: { response: Response }) =>
+    Promise.resolve(
+      response.ok && (response.headers.get("content-type") ?? "").startsWith("image/")
+        ? response
+        : null,
+    ),
+} as unknown as StrategyPlugins;
+
 registerRoute(
   (({ url }: MatchInput) => url.pathname.startsWith("/img/")) as RouteCb,
   new CacheFirst({
     cacheName: "images",
-    plugins: [expirationPlugin({ maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 })],
+    plugins: [
+      imageOnlyPlugin,
+      expirationPlugin({ maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 }),
+    ],
   }),
 );
 
