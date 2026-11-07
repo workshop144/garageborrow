@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Item, Loan, Reservation, WaitlistEntry } from "@garageborrow/shared";
 
-import { api, ApiError } from "../lib/api";
+import { api } from "../lib/api";
 import { newIdempotencyKey } from "../lib/idempotency";
 import { DEFAULT_GARAGE_SLUG } from "./useGarageItems";
 
@@ -31,13 +31,6 @@ export type MyStuffResponse = {
   };
 };
 
-const EMPTY: MyStuffResponse = {
-  loans: [],
-  reservations: [],
-  waitlist: [],
-  stats: { borrows_total: 0, returns_on_time: 0, borrows_active: 0 },
-};
-
 export function myStuffQueryKey(garageSlug: string): readonly unknown[] {
   return ["my-stuff", garageSlug];
 }
@@ -45,21 +38,10 @@ export function myStuffQueryKey(garageSlug: string): readonly unknown[] {
 export function useMyStuff(garageSlug: string = DEFAULT_GARAGE_SLUG) {
   return useQuery({
     queryKey: myStuffQueryKey(garageSlug),
-    queryFn: async ({ signal }) => {
-      try {
-        return await api.get<MyStuffResponse>(
-          `/me/stuff?garage=${encodeURIComponent(garageSlug)}`,
-          {
-            signal,
-          },
-        );
-      } catch (err) {
-        // ApiError.message is the API's text ("Route not found"), not the
-        // status, so match on the status itself.
-        if (err instanceof ApiError && err.status === 404) return EMPTY;
-        throw err;
-      }
-    },
+    queryFn: ({ signal }) =>
+      api.get<MyStuffResponse>(`/me/stuff?garage=${encodeURIComponent(garageSlug)}`, {
+        signal,
+      }),
     staleTime: 15_000,
   });
 }

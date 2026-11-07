@@ -1,6 +1,6 @@
 import type { JSX, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -132,12 +132,13 @@ describe("SettingsForm", () => {
     await user.click(screen.getByLabelText("Vouching required for new members"));
     await user.type(screen.getByLabelText("Intro copy"), "Give back");
 
-    // Edit, remove and add orgs: the remaining list is renumbered.
-    // fireEvent rather than user.type: the org row is keyed on its name, so the
-    // input remounts (and loses focus) on every keystroke.
-    fireEvent.change(screen.getByDisplayValue("Food Pantry"), {
-      target: { value: "Tool Library" },
-    });
+    // Edit, remove and add orgs: the remaining list is renumbered. Rows have
+    // stable keys, so typing keeps focus in the same input.
+    const org = screen.getByDisplayValue("Food Pantry");
+    await user.clear(org);
+    await user.type(org, "Tool Library");
+    expect(org).toHaveFocus();
+    expect(org).toHaveValue("Tool Library");
     await user.click(screen.getAllByRole("button", { name: "Remove" })[1] as HTMLElement);
     await user.click(screen.getByRole("button", { name: "Add organization" }));
     expect(screen.getByDisplayValue("New org")).toBeInTheDocument();
@@ -175,5 +176,74 @@ describe("SettingsForm", () => {
     });
     // Fresh server data re-seeds the draft.
     await waitFor(() => expect(screen.getByLabelText("Closed until")).toHaveValue("2026-12-01"));
+  });
+
+  it("keeps typed commas in the quality tiers input and parses on save", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    const quality = await screen.findByLabelText("Quality tiers (comma-separated)");
+    await user.clear(quality);
+    await user.type(quality, "Mint, Used,");
+    expect(quality).toHaveValue("Mint, Used,");
+    await user.type(quality, " Rough");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect((patches()[0]?.body as { quality_tiers: string[] }).quality_tiers).toEqual([
+      "Mint",
+      "Used",
+      "Rough",
+    ]);
+  });
+
+  it("shows an error instead of loading forever when the settings fetch fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(jsonResponse({ error: { code: "forbidden", message: "No" } }, 403)),
+      ),
+    );
+    renderForm();
+    expect(await screen.findByText("Couldn't load settings.")).toBeInTheDocument();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
+
+  it("shows the API error when saving fails and clears it on a successful retry", async () => {
+    const user = userEvent.setup();
+    let failNext = true;
+    const ok = fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit) => {
+        if (init.method === "PATCH" && failNext) {
+          failNext = false;
+          return Promise.resolve(
+            jsonResponse({ error: { code: "validation", message: "Name is too long" } }, 400),
+          );
+        }
+        return ok(url, init);
+      }),
+    );
+    renderForm();
+    await screen.findByLabelText("Name");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Name is too long");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("falls back to a generic save error for non-API failures", async () => {
+    const user = userEvent.setup();
+    const ok = fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit) =>
+        init.method === "PATCH" ? Promise.reject(new TypeError("offline")) : ok(url, init),
+      ),
+    );
+    renderForm();
+    await screen.findByLabelText("Name");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save settings.");
   });
 });

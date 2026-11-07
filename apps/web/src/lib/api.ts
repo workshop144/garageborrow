@@ -90,7 +90,9 @@ export async function apiRequest<T>(path: string, opts: RequestOpts = {}): Promi
     const env = (parsed ?? {}) as ErrorEnvelope;
     const apiErr = new ApiError({
       code: env.error?.code ?? `HTTP_${res.status}`,
-      message: env.error?.message ?? res.statusText ?? "Request failed",
+      // `||`, not `??`: an empty API message or statusText (HTTP/2 has none)
+      // must fall through to the next option.
+      message: env.error?.message || res.statusText || "Request failed",
       status: res.status,
       details: env.error?.details,
     });

@@ -16,6 +16,11 @@ export function usePullToRefresh({ onRefresh, threshold = 64, resistance = 2.2 }
   const [refreshing, setRefreshing] = useState(false);
   const startY = useRef<number | null>(null);
   const tracking = useRef(false);
+  // The live pull distance and in-flight flag live in refs so the touchend
+  // handler reads current values and never runs side effects inside a state
+  // updater (StrictMode double-invokes those).
+  const pullRef = useRef(0);
+  const refreshingRef = useRef(false);
 
   useEffect(() => {
     const onTouchStart = (e: TouchEvent) => {
@@ -35,29 +40,27 @@ export function usePullToRefresh({ onRefresh, threshold = 64, resistance = 2.2 }
       const t = e.touches[0];
       if (!t) return;
       const dy = t.clientY - startY.current;
-      if (dy <= 0) {
-        setPull(0);
-        return;
-      }
-      const damped = dy / resistance;
-      setPull(Math.min(damped, threshold * 1.5));
+      const next = dy <= 0 ? 0 : Math.min(dy / resistance, threshold * 1.5);
+      pullRef.current = next;
+      setPull(next);
     };
 
     const onTouchEnd = () => {
       if (!tracking.current) return;
       tracking.current = false;
       startY.current = null;
-      setPull((current) => {
-        if (current >= threshold && !refreshing) {
-          setRefreshing(true);
-          Promise.resolve(onRefresh()).finally(() => {
-            setRefreshing(false);
-            setPull(0);
-          });
-        } else {
-          return 0;
-        }
-        return current;
+      if (pullRef.current < threshold || refreshingRef.current) {
+        pullRef.current = 0;
+        setPull(0);
+        return;
+      }
+      refreshingRef.current = true;
+      setRefreshing(true);
+      Promise.resolve(onRefresh()).finally(() => {
+        refreshingRef.current = false;
+        pullRef.current = 0;
+        setRefreshing(false);
+        setPull(0);
       });
     };
 
@@ -71,7 +74,7 @@ export function usePullToRefresh({ onRefresh, threshold = 64, resistance = 2.2 }
       window.removeEventListener("touchend", onTouchEnd);
       window.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [onRefresh, threshold, resistance, refreshing]);
+  }, [onRefresh, threshold, resistance]);
 
   return { pull, refreshing };
 }

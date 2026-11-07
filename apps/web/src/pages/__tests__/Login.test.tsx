@@ -156,11 +156,9 @@ describe("Login — code step", () => {
     const codeInput = screen.getByLabelText("6-digit code");
     await user.type(codeInput, "12a3");
     expect(codeInput).toHaveValue("123");
-    // The input's pattern blocks a native submit; submit directly to reach
-    // the component's own guard.
-    const form = codeInput.closest("form");
-    if (!form) throw new Error("no form");
-    fireEvent.submit(form);
+    // No native `pattern` on the input: Verify reaches the component's own guard.
+    expect(codeInput).not.toHaveAttribute("pattern");
+    await user.click(screen.getByRole("button", { name: "Verify" }));
     expect(
       await screen.findByText("Enter the 6-digit code we just texted you."),
     ).toBeInTheDocument();

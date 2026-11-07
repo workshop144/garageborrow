@@ -178,6 +178,31 @@ describe("ItemEditDrawer", () => {
     expect(body.tags).toEqual(["drill", "18v"]);
   });
 
+  it("shows the API error when saving fails, then clears it and closes on retry", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({ error: { code: "validation", message: "Name taken" } }, 409),
+        )
+        .mockRejectedValueOnce(new TypeError("offline"))
+        .mockResolvedValueOnce(jsonResponse({ item: { id: "item_1" } })),
+    );
+    const { onClose } = renderDrawer(ITEM);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Name taken");
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Couldn't save the tool."),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("retires an existing item", async () => {
     const user = userEvent.setup();
     const { onClose } = renderDrawer(ITEM);

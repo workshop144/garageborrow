@@ -38,8 +38,8 @@ import {
 const DAY = 86_400_000;
 let sent: ReturnType<typeof spyNotifier>;
 
-function inDays(days: number): string {
-  return new Date(Date.now() + days * DAY).toISOString();
+function inDays(days: number, now = Date.now()): string {
+  return new Date(now + days * DAY).toISOString();
 }
 
 function call(method: string, path: string, phone: string, body?: unknown) {
@@ -52,8 +52,15 @@ function call(method: string, path: string, phone: string, body?: unknown) {
 
 const post = (path: string, phone: string, body: unknown = {}) => call("POST", path, phone, body);
 
+// Both ends from one clock read: two Date.now() calls a millisecond apart made
+// an exactly-60-day window 60 days + 1 ms long, which the API rightly refuses.
 function reserve(phone: string, item_id: string, start: number, end: number) {
-  return post("/reservations", phone, { item_id, start_at: inDays(start), end_at: inDays(end) });
+  const now = Date.now();
+  return post("/reservations", phone, {
+    item_id,
+    start_at: inDays(start, now),
+    end_at: inDays(end, now),
+  });
 }
 
 async function idOf(res: Response): Promise<string> {

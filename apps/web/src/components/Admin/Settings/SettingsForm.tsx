@@ -7,16 +7,34 @@ import {
   useUpdateGarageSettings,
   type GarageSettingsPatch,
 } from "../../../hooks/useGarageSettings";
+import { ApiError } from "../../../lib/api";
 
 const TIERS: TierName[] = ["howdy", "friend", "family"];
+
+// A client-only id per org row, so React keys stay stable while the name is
+// edited. Never sent to the API.
+type OrgRow = { key: number; org: NonprofitOrg };
+let nextOrgKey = 0;
+function orgRow(org: NonprofitOrg): OrgRow {
+  nextOrgKey += 1;
+  return { key: nextOrgKey, org };
+}
+
+function parseQualityTiers(text: string): string[] {
+  return text
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
 
 type Draft = {
   name: string;
   status: Garage["status"];
   closed_until_date: string;
   tier_labels: TierLabels;
-  quality_tiers: string[];
-  payforward_orgs: NonprofitOrg[];
+  // Raw text, parsed on save, so typing a comma isn't swallowed mid-edit.
+  quality_tiers_text: string;
+  payforward_orgs: OrgRow[];
   payforward_intro_copy: string;
   vouching_required: boolean;
   ai_enabled: boolean;
@@ -32,8 +50,8 @@ function fromGarage(g: Garage): Draft {
     status: g.status,
     closed_until_date: g.closed_until_date ?? "",
     tier_labels: g.tier_labels,
-    quality_tiers: g.quality_tiers,
-    payforward_orgs: g.payforward_orgs,
+    quality_tiers_text: g.quality_tiers.join(", "),
+    payforward_orgs: g.payforward_orgs.map(orgRow),
     payforward_intro_copy: g.payforward_intro_copy ?? "",
     vouching_required: g.vouching_required,
     ai_enabled: g.ai_enabled,
@@ -48,6 +66,7 @@ export function SettingsForm(): JSX.Element {
   const garage = useGarage();
   const update = useUpdateGarageSettings();
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Reload the draft whenever fresh garage data arrives (first load, or the
   // refetch after a save).
@@ -57,8 +76,8 @@ export function SettingsForm(): JSX.Element {
     if (garage.data?.garage) setDraft(fromGarage(garage.data.garage));
   }
 
-  if (garage.isLoading || !draft) return <p className="opacity-70">Loading…</p>;
   if (garage.isError) return <p className="text-status-overdue">Couldn&apos;t load settings.</p>;
+  if (garage.isLoading || !draft) return <p className="opacity-70">Loading…</p>;
 
   function update_field<K extends keyof Draft>(k: K, v: Draft[K]): void {
     setDraft((d) => (d ? { ...d, [k]: v } : d));
@@ -71,8 +90,8 @@ export function SettingsForm(): JSX.Element {
       status: draft.status,
       ...(draft.closed_until_date ? { closed_until_date: draft.closed_until_date } : {}),
       tier_labels: draft.tier_labels,
-      quality_tiers: draft.quality_tiers,
-      payforward_orgs: draft.payforward_orgs,
+      quality_tiers: parseQualityTiers(draft.quality_tiers_text),
+      payforward_orgs: draft.payforward_orgs.map((r) => r.org),
       payforward_intro_copy: draft.payforward_intro_copy,
       vouching_required: draft.vouching_required,
       ai_enabled: draft.ai_enabled,
@@ -81,7 +100,12 @@ export function SettingsForm(): JSX.Element {
       ai_total_monthly_cap_cents: draft.ai_total_monthly_cap_cents,
       ai_default_model: draft.ai_default_model,
     };
-    await update.mutateAsync(patch);
+    setSaveError(null);
+    try {
+      await update.mutateAsync(patch);
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : "Couldn't save settings.");
+    }
   }
 
   return (
@@ -140,16 +164,8 @@ export function SettingsForm(): JSX.Element {
         <label className="mt-2 block">
           <span className="font-semibold">Quality tiers (comma-separated)</span>
           <input
-            value={draft.quality_tiers.join(", ")}
-            onChange={(e) =>
-              update_field(
-                "quality_tiers",
-                e.target.value
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter((s) => s.length > 0),
-              )
-            }
+            value={draft.quality_tiers_text}
+            onChange={(e) => update_field("quality_tiers_text", e.target.value)}
             className="mt-1 w-full rounded-xl border border-workshop/15 dark:border-surface-light/15 bg-transparent p-2"
           />
         </label>
@@ -179,16 +195,16 @@ export function SettingsForm(): JSX.Element {
           />
         </label>
         <ul className="mt-2 space-y-2">
-          {draft.payforward_orgs.map((o, idx) => (
+          {draft.payforward_orgs.map(({ key, org: o }, idx) => (
             <li
-              key={`${o.name}-${idx}`}
+              key={key}
               className="flex items-center gap-2 rounded-xl border border-workshop/15 dark:border-surface-light/15 p-2"
             >
               <input
                 value={o.name}
                 onChange={(e) => {
                   const next = [...draft.payforward_orgs];
-                  next[idx] = { ...o, name: e.target.value };
+                  next[idx] = { key, org: { ...o, name: e.target.value } };
                   update_field("payforward_orgs", next);
                 }}
                 className="flex-1 rounded-lg border border-workshop/15 dark:border-surface-light/15 bg-transparent p-1"
@@ -199,7 +215,7 @@ export function SettingsForm(): JSX.Element {
                   const next = draft.payforward_orgs.filter((_, i) => i !== idx);
                   update_field(
                     "payforward_orgs",
-                    next.map((n, i) => ({ ...n, display_order: i })),
+                    next.map((r, i) => ({ ...r, org: { ...r.org, display_order: i } })),
                   );
                 }}
                 className="text-xs text-status-overdue underline"
@@ -216,7 +232,7 @@ export function SettingsForm(): JSX.Element {
               name: "New org",
               display_order: draft.payforward_orgs.length,
             };
-            update_field("payforward_orgs", [...draft.payforward_orgs, next]);
+            update_field("payforward_orgs", [...draft.payforward_orgs, orgRow(next)]);
           }}
           className="mt-2 rounded-xl border border-workshop/15 dark:border-surface-light/15 px-3 py-1 text-xs"
         >
@@ -291,6 +307,12 @@ export function SettingsForm(): JSX.Element {
           </label>
         </div>
       </section>
+
+      {saveError ? (
+        <p role="alert" className="text-status-overdue">
+          {saveError}
+        </p>
+      ) : null}
 
       <div className="flex justify-end">
         <button
