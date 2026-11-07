@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import {
+  DisplayName,
   HttpUrl,
   NotificationPrefsSchema,
   UserVisibilitySchema,
@@ -214,7 +215,7 @@ meRoutes.post("/v1/me/join", async (c) => {
 
 const PatchMeSchema = z
   .object({
-    display_name: z.string().min(1).optional(),
+    display_name: DisplayName.optional(),
     visibility: UserVisibilitySchema.optional(),
     notification_prefs: patchSchemaOf(NotificationPrefsSchema).optional(),
   })

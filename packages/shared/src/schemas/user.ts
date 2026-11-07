@@ -19,9 +19,24 @@ export const NotificationPrefsSchema = z.object({
 });
 export type NotificationPrefs = z.infer<typeof NotificationPrefsSchema>;
 
+// A member's name is shown to every member of each garage they belong to, so it
+// is bounded like every other member-writable text field. Control characters
+// and bidi overrides are rejected: they can break or disguise the rows other
+// members see (a right-to-left override can make one name read as another).
+// Zero-width joiners stay allowed, emoji sequences need them.
+export const DISPLAY_NAME_MAX_LENGTH = 60;
+// eslint-disable-next-line no-control-regex
+const DISPLAY_NAME_FORBIDDEN_RE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+export const DisplayName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(DISPLAY_NAME_MAX_LENGTH)
+  .refine((v) => !DISPLAY_NAME_FORBIDDEN_RE.test(v), "must not contain control characters");
+
 export const UserSchema = z.object({
   phone: PhoneE164,
-  display_name: z.string().min(1),
+  display_name: DisplayName,
   visibility: UserVisibilitySchema.default("visible"),
   garages_member_of: z.array(z.string().min(1)).default([]),
   notification_prefs: NotificationPrefsSchema,

@@ -14,6 +14,8 @@ import {
   PushSubscriptionSchema,
   ReservationSchema,
   UserSchema,
+  DisplayName,
+  DISPLAY_NAME_MAX_LENGTH,
   WaitlistEntrySchema,
   WishlistRequestSchema,
   WishlistVoteSchema,
@@ -107,6 +109,25 @@ describe("UserSchema", () => {
     const r = UserSchema.safeParse({ ...valid, phone: "not-a-phone" });
     expect(r.success).toBe(false);
     if (!r.success) expect(pathOf(r.error)).toEqual(["phone"]);
+  });
+  it("bounds display_name to 60 characters (GB-R1-1)", () => {
+    expect(UserSchema.safeParse({ ...valid, display_name: "a".repeat(60) }).success).toBe(true);
+    const r = UserSchema.safeParse({ ...valid, display_name: "a".repeat(61) });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(pathOf(r.error)).toEqual(["display_name"]);
+  });
+  it("rejects control and bidi override characters in display_name", () => {
+    for (const bad of ["a\nb", "a\tb", "\u202eab", "a\u2066b", "a\u0085b"]) {
+      expect(UserSchema.safeParse({ ...valid, display_name: bad }).success).toBe(false);
+    }
+  });
+});
+
+describe("DisplayName", () => {
+  it("trims and rejects blank names", () => {
+    expect(DisplayName.parse("  Sam ")).toBe("Sam");
+    expect(DisplayName.safeParse(" \t ").success).toBe(false);
+    expect(DISPLAY_NAME_MAX_LENGTH).toBe(60);
   });
 });
 
