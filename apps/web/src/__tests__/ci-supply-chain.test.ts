@@ -42,6 +42,17 @@ describe("CI supply chain (S4-1)", () => {
     expect(sh).toMatch(/cd "\$\{REPO_ROOT\}\/tools\/lighthouse" && pnpm exec lighthouse /);
   });
 
+  it("lighthouse.sh gates on the median of at least 3 runs, not a single noisy run", () => {
+    const sh = code(lighthouseSh);
+    const runs = /RUNS="\$\{RUNS:-(\d+)\}"/.exec(sh);
+    expect(runs).not.toBeNull();
+    expect(Number(runs?.[1])).toBeGreaterThanOrEqual(3);
+    expect(Number(runs?.[1]) % 2).toBe(1);
+    expect(sh).toMatch(/for i in \$\(seq 1 "\$\{RUNS\}"\)/);
+    expect(sh).toMatch(/PERF_MIN="\$\{PERF_MIN:-85\}"/);
+    expect(sh).toMatch(/BP_MIN="\$\{BP_MIN:-95\}"/);
+  });
+
   it("lighthouse is exactly pinned in tools/lighthouse and not an app dependency", () => {
     const pkg = JSON.parse(lighthousePkgRaw) as {
       private?: boolean;

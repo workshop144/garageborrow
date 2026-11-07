@@ -58,7 +58,8 @@ jobs:
 
       - name: Lighthouse
         # Targets: 90+ Performance / 95+ Accessibility / 95+ Best Practices / 90+ SEO.
-        # Thresholds are configured inside scripts/lighthouse.sh.
+        # Thresholds are configured inside scripts/lighthouse.sh; it runs
+        # Lighthouse 3 times and gates on the median of each category.
         run: ./scripts/lighthouse.sh
 
       - name: Upload Lighthouse report
