@@ -37,13 +37,28 @@ function previousCode(
 // Hard caps on operator-paid texts. Cognito's InitiateAuth is a public API, so
 // /v1/auth/start's limits can be skipped by calling Cognito directly; these can't.
 //
-// Budgets are per phone first. The shared daily cap bounds total spend, but a
-// phone's first SMS_RESERVED_PER_PHONE_PER_DAY texts do not depend on it: one
-// caller cycling a few known numbers can spend the shared budget, and that must
-// not lock every member out of sign-in for the day. The reserve is only for
-// current members (a live garage profile), so it is bounded by the member
-// count: a Cognito user left over from a revoked or expired invite gets no
-// texts beyond the shared cap.
+// Order: per phone per hour, per phone per day, then the shared daily cap.
+//
+// The shared daily cap bounds total spend, but a phone's first
+// SMS_RESERVED_PER_PHONE_PER_DAY texts do not depend on it: one caller cycling
+// a few known numbers can spend the shared budget, and that must not lock
+// every member out of sign-in for the day. The reserve is only for current
+// members (a live garage profile), so it is bounded by the member count: a
+// Cognito user left over from a revoked or expired invite gets no texts beyond
+// the shared cap.
+//
+// ACCEPTED RISK (GB-R1-3, documented in STATE.md): the reserve does NOT cover
+// the per-phone caps. Anyone who knows a member's number can call InitiateAuth
+// SMS_PER_PHONE_PER_DAY times and stop that member's codes until the next UTC
+// day. That is the cost of a hard per-phone spend cap: the trigger sees no
+// caller IP or device (only Cognito's paid threat protection does), so nothing
+// here can tell the member's own attempt from the attacker's, and any budget
+// an outsider can spend they can also exhaust. It is limited by the 30-day
+// refresh token (a signed-in member does not need a code), and every capped
+// attempt is logged as event "sms_capped" with the scope and the last 4
+// digits, and the first one per phone per day as "sms_phone_day_lockout",
+// which the "sms-capped" CloudWatch Logs Insights query in infra/template.yaml
+// lists.
 export const SMS_PER_PHONE_PER_HOUR = 5;
 export const SMS_PER_PHONE_PER_DAY = 10;
 export const SMS_RESERVED_PER_PHONE_PER_DAY = 2;
@@ -54,20 +69,40 @@ async function smsAllowed(phone: string): Promise<boolean> {
   const hour = now.toISOString().slice(0, 13);
   const day = now.toISOString().slice(0, 10);
   const expires = Math.floor(now.getTime() / 1000) + 2 * 86400;
+  // Last 4 digits only: enough for the operator to recognise a targeted
+  // member, and the logger redacts full numbers anyway.
+  const phone_last4 = phone.slice(-4);
   const perPhone = await bumpWindowCounter("sms-phone", phone, hour, expires);
   if (perPhone > SMS_PER_PHONE_PER_HOUR) {
-    logger.warn({ event: "sms_capped", scope: "phone" }, "per-phone SMS cap reached");
+    logger.warn(
+      { event: "sms_capped", scope: "phone", phone_last4, count: perPhone },
+      "per-phone SMS cap reached",
+    );
     return false;
   }
   const perPhoneDay = await bumpWindowCounter("sms-phone-day", phone, day, expires);
   if (perPhoneDay > SMS_PER_PHONE_PER_DAY) {
-    logger.warn({ event: "sms_capped", scope: "phone-day" }, "per-phone daily SMS cap reached");
+    logger.warn(
+      { event: "sms_capped", scope: "phone-day", phone_last4, count: perPhoneDay },
+      "per-phone daily SMS cap reached",
+    );
+    if (perPhoneDay === SMS_PER_PHONE_PER_DAY + 1) {
+      // First refusal of the day for this phone: either a member asked for
+      // 11 codes, or someone is spending their budget (GB-R1-3).
+      logger.error(
+        { event: "sms_phone_day_lockout", phone_last4, day },
+        "phone reached its daily SMS cap; sign-in codes stop until the next UTC day",
+      );
+    }
     return false;
   }
   const total = await bumpWindowCounter("sms-total", "all", day, expires);
   if (total > SMS_DAILY_CAP) {
     if (perPhoneDay > SMS_RESERVED_PER_PHONE_PER_DAY || !(await isCurrentMember(phone))) {
-      logger.warn({ event: "sms_capped", scope: "daily" }, "daily SMS cap reached");
+      logger.warn(
+        { event: "sms_capped", scope: "daily", phone_last4, count: total },
+        "daily SMS cap reached",
+      );
       return false;
     }
   }

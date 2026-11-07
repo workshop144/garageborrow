@@ -1,9 +1,10 @@
 import { PublishCommand, SNSClient } from "@aws-sdk/client-sns";
 import type { CreateAuthChallengeTriggerEvent } from "aws-lambda";
 import { mockClient } from "aws-sdk-client-mock";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installDdbMock, resetDdbStore, seedItem } from "../../__tests__/_setup.js";
+import { logger } from "../../lib/logger.js";
 import { handler, SMS_PER_PHONE_PER_DAY } from "../create-auth-challenge.js";
 
 const sns = mockClient(SNSClient);
@@ -18,6 +19,7 @@ beforeEach(() => {
 
 afterEach(() => {
   sns.reset();
+  vi.restoreAllMocks();
 });
 
 function makeEvent(phone = "+15555550123"): CreateAuthChallengeTriggerEvent {
@@ -178,5 +180,56 @@ describe("create-auth-challenge", () => {
     const result = await invoke(makeEvent("+15555550188"));
     expect(sns.commandCalls(PublishCommand)).toHaveLength(0);
     expect(result.response.privateChallengeParameters["code"]).toBe("");
+  });
+
+  // GB-R1-3 (accepted risk, STATE.md): an outsider can spend a member's
+  // per-phone budget by calling InitiateAuth. Each refusal is logged with the
+  // last 4 digits, and the first refusal of the day once as a lockout event,
+  // so the operator can see it happening (saved query "sms-capped").
+  describe("lockout visibility", () => {
+    const PHONE = "+15555550166";
+    function seedDayCount(count: number): void {
+      const day = new Date().toISOString().slice(0, 10);
+      seedItem({ PK: "RATELIMIT#sms-phone-day", SK: `${PHONE}#${day}`, count });
+    }
+    function logged(spy: { mock: { calls: unknown[][] } }): Array<Record<string, unknown>> {
+      return spy.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    }
+
+    it("logs the first refusal of the day once as sms_phone_day_lockout", async () => {
+      seedDayCount(SMS_PER_PHONE_PER_DAY);
+      const warn = vi.spyOn(logger, "warn");
+      const error = vi.spyOn(logger, "error");
+      await invoke(makeEvent(PHONE));
+      await invoke(makeEvent(PHONE));
+      expect(sns.commandCalls(PublishCommand)).toHaveLength(0);
+      const lockouts = logged(error).filter((o) => o["event"] === "sms_phone_day_lockout");
+      expect(lockouts).toHaveLength(1);
+      expect(lockouts[0]).toMatchObject({ phone_last4: "0166" });
+      const capped = logged(warn).filter((o) => o["event"] === "sms_capped");
+      expect(capped).toEqual([
+        expect.objectContaining({ scope: "phone-day", phone_last4: "0166", count: 11 }),
+        expect.objectContaining({ scope: "phone-day", phone_last4: "0166", count: 12 }),
+      ]);
+    });
+
+    it("never logs the full number", async () => {
+      const warn = vi.spyOn(logger, "warn");
+      const error = vi.spyOn(logger, "error");
+      for (let i = 0; i < 6; i++) await invoke(makeEvent(PHONE));
+      seedDayCount(SMS_PER_PHONE_PER_DAY + 5);
+      await invoke(makeEvent(PHONE));
+      const all = JSON.stringify([...warn.mock.calls, ...error.mock.calls]);
+      expect(all).toContain("sms_capped");
+      expect(all).not.toContain("5555550166");
+    });
+
+    it("logs the hourly refusal with the phone scope", async () => {
+      const warn = vi.spyOn(logger, "warn");
+      for (let i = 0; i < 6; i++) await invoke(makeEvent(PHONE));
+      expect(logged(warn)).toContainEqual(
+        expect.objectContaining({ event: "sms_capped", scope: "phone", phone_last4: "0166" }),
+      );
+    });
   });
 });
