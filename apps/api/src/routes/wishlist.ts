@@ -13,8 +13,10 @@ import { PhotoKey } from "../lib/photo-key.js";
 import {
   bumpWindowCounter,
   bumpWishlistVoteCount,
+  closeWishlistRequest,
   deleteWishlistVote,
   getGarage,
+  getItem,
   getUser,
   getUserAnyGarage,
   getWishlistRequest,
@@ -393,16 +395,15 @@ wishlistRoutes.delete("/v1/g/:garage/wishlist/:id", audit(), async (c) => {
     throw new ApiError("conflict", `Cannot cancel a ${req.status} request`);
   }
   const ts = nowIso();
-  const cancelled: WishlistRequest = {
-    ...req,
+  // Conditional on still open, and only the decision fields (review F5).
+  const cancelled = await closeWishlistRequest(req, {
     status: "cancelled",
     decided_at: ts,
     decided_by_phone: user.phone,
     ...(isOwner && !isRequester ? { decline_reason: "owner cancelled" } : {}),
     updated_at: ts,
-  };
-  // Wipe GSI3 keys so the cancelled request drops out of the open-list view.
-  await putWishlistRequest(cancelled);
+  });
+  if (!cancelled) throw new ApiError("conflict", "Request is no longer open");
   setAuditDetails(c, {
     action_type: "wishlist.cancelled",
     entity_type: "wishlist_request",
@@ -455,16 +456,22 @@ wishlistRoutes.post("/v1/g/:garage/admin/wishlist/:id/decide", async (c) => {
   // Always notify the requester even if they didn't auto-vote.
   voterPhones.add(req.requester_phone);
 
+  // Each branch closes the request with one conditional update before it
+  // notifies anyone: a concurrent cancel or second decision gets a 409 and
+  // sends nothing, and vote_count is never rewritten (review F5).
   if (body.decision === "acquired") {
-    const updated: WishlistRequest = {
-      ...req,
+    // The item the wish became must exist in this garage.
+    if (!(await getItem(garage.id, body.acquired_item_id))) {
+      throw new ApiError("bad_request", "acquired_item_id is not an item in this garage");
+    }
+    const updated = await closeWishlistRequest(req, {
       status: "acquired",
       acquired_item_id: body.acquired_item_id,
       decided_at: ts,
       decided_by_phone: user.phone,
       updated_at: ts,
-    };
-    await putWishlistRequest(updated);
+    });
+    if (!updated) throw new ApiError("conflict", "Request is no longer open");
     setAuditDetails(c, {
       action_type: "wishlist.acquired",
       entity_type: "wishlist_request",
@@ -488,15 +495,14 @@ wishlistRoutes.post("/v1/g/:garage/admin/wishlist/:id/decide", async (c) => {
   }
 
   if (body.decision === "declined") {
-    const updated: WishlistRequest = {
-      ...req,
+    const updated = await closeWishlistRequest(req, {
       status: "declined",
       ...(body.decline_reason ? { decline_reason: body.decline_reason } : {}),
       decided_at: ts,
       decided_by_phone: user.phone,
       updated_at: ts,
-    };
-    await putWishlistRequest(updated);
+    });
+    if (!updated) throw new ApiError("conflict", "Request is no longer open");
     setAuditDetails(c, {
       action_type: "wishlist.declined",
       entity_type: "wishlist_request",
@@ -523,6 +529,18 @@ wishlistRoutes.post("/v1/g/:garage/admin/wishlist/:id/decide", async (c) => {
   if (canonical.id === req.id) {
     throw new ApiError("bad_request", "duplicate_of_id must reference a different request");
   }
+  // Votes move only to a request that can still be acquired.
+  if (canonical.status !== "open") {
+    throw new ApiError("conflict", `Canonical request is ${canonical.status}`);
+  }
+  const updated = await closeWishlistRequest(req, {
+    status: "duplicate",
+    duplicate_of_id: canonical.id,
+    decided_at: ts,
+    decided_by_phone: user.phone,
+    updated_at: ts,
+  });
+  if (!updated) throw new ApiError("conflict", "Request is no longer open");
   let transferred = 0;
   for (const v of votes) {
     const recorded = await putWishlistVote(garage.id, {
@@ -535,15 +553,6 @@ wishlistRoutes.post("/v1/g/:garage/admin/wishlist/:id/decide", async (c) => {
   if (transferred > 0) {
     await bumpWishlistVoteCount(canonical, transferred);
   }
-  const updated: WishlistRequest = {
-    ...req,
-    status: "duplicate",
-    duplicate_of_id: canonical.id,
-    decided_at: ts,
-    decided_by_phone: user.phone,
-    updated_at: ts,
-  };
-  await putWishlistRequest(updated);
   setAuditDetails(c, {
     action_type: "wishlist.duplicated",
     entity_type: "wishlist_request",

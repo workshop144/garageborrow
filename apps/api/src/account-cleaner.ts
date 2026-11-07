@@ -38,6 +38,7 @@ import {
 import { ddb } from "./lib/ddb.js";
 import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
+import { PENDING_SCRUB_PK, pendingScrubKey } from "./lib/pending-scrub.js";
 import { DAILY_COUNTERS } from "./lib/spam-cap.js";
 import { rewriteRow, type Row } from "./lib/row-rewrite.js";
 import { initSentry } from "./lib/sentry.js";
@@ -67,7 +68,7 @@ export function newPseudonym(): string {
 
 // Durable hard-delete work queue: one row per phone still being scrubbed. It
 // holds the raw phone only until the scrub completes, and the scrub skips it.
-export const PENDING_SCRUB_PK = "CLEANER#PENDING";
+export { PENDING_SCRUB_PK };
 
 interface PendingScrub {
   PK: string;
@@ -83,8 +84,7 @@ async function ensurePendingScrub(phone: string, now: Date): Promise<void> {
       new PutCommand({
         TableName: env.tableName(),
         Item: {
-          PK: PENDING_SCRUB_PK,
-          SK: `PHONE#${phone}`,
+          ...pendingScrubKey(phone),
           phone,
           pseudonym: newPseudonym(),
           created_at: now.toISOString(),
@@ -122,7 +122,7 @@ export async function getPendingScrub(phone: string): Promise<PendingScrub | und
   const r = await ddb().send(
     new GetCommand({
       TableName: env.tableName(),
-      Key: { PK: PENDING_SCRUB_PK, SK: `PHONE#${phone}` },
+      Key: pendingScrubKey(phone),
       ConsistentRead: true,
     }),
   );
@@ -240,7 +240,21 @@ export async function runCleanup(now: Date): Promise<DeleteCounts> {
     for (const pending of await listPendingScrubs()) {
       const phone = pending.phone;
       try {
-        await deleteUserRecords(phone, byPhone.get(phone)?.pks ?? []);
+        // The queue may be a day old (a run that timed out) or older than the
+        // member's cancel: re-check the profiles before deleting anything
+        // (2026-11-07 review F3).
+        const due = await stillDueForDelete(phone, byPhone.get(phone)?.pks ?? [], cutoff);
+        if (!due.due) {
+          await ddb().send(
+            new DeleteCommand({
+              TableName: env.tableName(),
+              Key: { PK: pending.PK, SK: pending.SK },
+            }),
+          );
+          logger.info({}, "cleaner_pending_dropped_deletion_cancelled");
+          continue;
+        }
+        await deleteUserRecords(phone, due.pks);
         const scrub = await anonymizeAcrossEntities(phone, pending.pseudonym);
         counts.records_anonymized += scrub.written;
         const cognitoGone = await deleteCognitoUser(phone);
@@ -270,6 +284,52 @@ export async function runCleanup(now: Date): Promise<DeleteCounts> {
   }
 
   return counts;
+}
+
+// Whether a queued phone should still be hard-deleted. Reads every profile row
+// of the phone with ConsistentRead (the garages come from this run's Scan and
+// the byUser index). Not due when a profile still exists and none of them
+// carries a deleted_at older than the cutoff: the member cancelled (cancel
+// clears deleted_at on every profile) or asked again recently. Due when every
+// profile row is gone: an earlier run already deleted them and must finish
+// the scrub.
+async function stillDueForDelete(
+  phone: string,
+  knownPks: string[],
+  cutoff: string,
+): Promise<{ due: boolean; pks: string[] }> {
+  const pks = new Set(knownPks);
+  let last: Record<string, unknown> | undefined;
+  do {
+    const r = await ddb().send(
+      new QueryCommand({
+        TableName: env.tableName(),
+        IndexName: "byUser",
+        KeyConditionExpression: "GSI1PK = :pk AND begins_with(GSI1SK, :sk)",
+        ExpressionAttributeValues: { ":pk": `USER#${phone}`, ":sk": "USER#" },
+        ProjectionExpression: "PK",
+        ...(last ? { ExclusiveStartKey: last } : {}),
+      }),
+    );
+    for (const it of r.Items ?? []) {
+      if (typeof it["PK"] === "string" && it["PK"].startsWith("TENANT#")) pks.add(it["PK"]);
+    }
+    last = r.LastEvaluatedKey;
+  } while (last);
+  const profiles: { deleted_at?: string }[] = [];
+  for (const pk of pks) {
+    const r = await ddb().send(
+      new GetCommand({
+        TableName: env.tableName(),
+        Key: { PK: pk, SK: `USER#${phone}` },
+        ConsistentRead: true,
+      }),
+    );
+    if (r.Item) profiles.push(r.Item as { deleted_at?: string });
+  }
+  if (profiles.length === 0) return { due: true, pks: [...pks] };
+  const due = profiles.some((p) => typeof p.deleted_at === "string" && p.deleted_at < cutoff);
+  return { due, pks: [...pks] };
 }
 
 // Matches the phone as stored ("+15555550100") and percent-encoded the way it

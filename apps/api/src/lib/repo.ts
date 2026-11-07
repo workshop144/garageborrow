@@ -240,6 +240,54 @@ export async function putMembership(m: GarageMembership): Promise<void> {
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, m) }));
 }
 
+// Sets only the given membership fields. borrows_* and returns_* counters are
+// bumped with atomic ADD elsewhere (loans, returns, auto-confirm), so a
+// read-modify-put of the whole row would undo a bump that landed in between
+// (2026-11-07 review F4). The row must exist; `onlyIf` adds "#field = :value"
+// checks. Returns the row after the update, or undefined when the row is gone
+// or a check failed.
+export async function updateMembershipFields(
+  garage_id: string,
+  phone: string,
+  fields: Partial<GarageMembership>,
+  onlyIf: Partial<GarageMembership> = {},
+): Promise<GarageMembership | undefined> {
+  const k = tenantMemberKey(garage_id, phone);
+  const names: Record<string, string> = {};
+  const values: Record<string, unknown> = {};
+  const sets = Object.entries(fields)
+    .filter(([, v]) => v !== undefined)
+    .map(([f, v], i) => {
+      names[`#s${i}`] = f;
+      values[`:s${i}`] = v;
+      return `#s${i} = :s${i}`;
+    });
+  const conds = ["attribute_exists(PK)"];
+  Object.entries(onlyIf).forEach(([f, v], i) => {
+    names[`#c${i}`] = f;
+    values[`:c${i}`] = v;
+    conds.push(`#c${i} = :c${i}`);
+  });
+  if (sets.length === 0) return getMembership(garage_id, phone);
+  try {
+    const r = await ddb().send(
+      new UpdateCommand({
+        TableName: table(),
+        Key: { PK: k.pk, SK: k.sk },
+        UpdateExpression: `SET ${sets.join(", ")}`,
+        ConditionExpression: conds.join(" AND "),
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    return r.Attributes as GarageMembership | undefined;
+  } catch (err) {
+    if ((err as { name?: string }).name === "ConditionalCheckFailedException") return undefined;
+    throw err;
+  }
+}
+
 export async function listMembers(garage_id: string): Promise<GarageMembership[]> {
   const r = await queryAll({
     TableName: table(),
@@ -789,6 +837,53 @@ export async function putWishlistRequest(req: WishlistRequest): Promise<void> {
     base["GSI3SK"] = gsi.GSI3SK;
   }
   await ddb().send(new PutCommand({ TableName: table(), Item: base }));
+}
+
+// Closes an open wishlist request (cancel or an owner decision) by setting only
+// the decision fields, conditional on it still being open. A read-then-put of
+// the whole row let a concurrent cancel and decide both succeed (and both
+// notify), and its stale vote_count overwrote votes cast meanwhile (2026-11-07
+// review F5). The GSI3 keys go, so the row leaves the open-by-votes index.
+// Returns the closed row, or undefined when it was no longer open (or gone).
+export async function closeWishlistRequest(
+  req: WishlistRequest,
+  fields: Pick<WishlistRequest, "status" | "decided_at" | "decided_by_phone" | "updated_at"> &
+    Partial<Pick<WishlistRequest, "decline_reason" | "acquired_item_id" | "duplicate_of_id">>,
+): Promise<WishlistRequest | undefined> {
+  const k = wishlistKey(req.garage_id, req.created_at.slice(0, 10), req.id);
+  const names: Record<string, string> = { "#status": "status" };
+  const values: Record<string, unknown> = { ":open": "open" };
+  const sets = Object.entries(fields)
+    .filter(([, v]) => v !== undefined)
+    .map(([f, v], i) => {
+      names[`#f${i}`] = f;
+      values[`:f${i}`] = v;
+      return `#f${i} = :f${i}`;
+    });
+  try {
+    const r = await ddb().send(
+      new UpdateCommand({
+        TableName: table(),
+        Key: { PK: k.pk, SK: k.sk },
+        UpdateExpression: `SET ${sets.join(", ")} REMOVE GSI3PK, GSI3SK`,
+        ConditionExpression: "#status = :open",
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    const {
+      PK: _pk,
+      SK: _sk,
+      GSI3PK: _g3pk,
+      GSI3SK: _g3sk,
+      ...row
+    } = (r.Attributes ?? {}) as Record<string, unknown>;
+    return row as unknown as WishlistRequest;
+  } catch (err) {
+    if (isConditionFailure(err)) return undefined;
+    throw err;
+  }
 }
 
 export async function listWishlistRequests(garage_id: string): Promise<WishlistRequest[]> {

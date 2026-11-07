@@ -30,6 +30,7 @@ import {
   type MyStuffItemView,
 } from "../lib/member-views.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
+import { deletePendingScrub } from "../lib/pending-scrub.js";
 import {
   getGarage,
   getItem,
@@ -55,6 +56,7 @@ import {
   putReservationIfStatus,
   putUser,
   removeUserFields,
+  updateMembershipFields,
   updateUserFields,
 } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
@@ -128,12 +130,14 @@ meRoutes.get("/v1/me", async (c) => {
   for (const m of memberships) {
     if (m.celebration_pending) {
       celebrationPending = true;
-      const cleared: GarageMembership = {
-        ...m,
-        celebration_pending: false,
-        celebration_seen_at: ts,
-      };
-      await putMembership(cleared);
+      // Two fields only, and only while still pending: a whole-row put of this
+      // snapshot would undo counter bumps made since it was read (review F4).
+      await updateMembershipFields(
+        m.garage_id,
+        m.user_phone,
+        { celebration_pending: false, celebration_seen_at: ts },
+        { celebration_pending: true },
+      );
       // Mutate in place so the response reflects the cleared state too.
       m.celebration_pending = false;
       m.celebration_seen_at = ts;
@@ -330,6 +334,9 @@ meRoutes.post("/v1/me/delete-request/cancel", requireIdempotencyKey(), async (c)
       await removeUserFields(pk.slice(7), user.phone, ["deleted_at"]);
     }
   }
+  // A cleaner run that timed out may have queued this phone already; drop
+  // that queue entry too (the cleaner also re-checks the profiles, F3).
+  await deletePendingScrub(user.phone);
   return c.json({ status: "deletion_cancelled" });
 });
 

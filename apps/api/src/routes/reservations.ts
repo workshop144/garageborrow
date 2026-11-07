@@ -33,9 +33,16 @@ reservationRoutes.use("/v1/g/:garage/reservations/*", requireAuth(), loadGarageC
 const ReservationCreateSchema = z.object({
   item_id: z.string().min(1),
   instance_id: z.string().min(1).optional(),
-  start_at: z.iso.datetime({ offset: true }),
-  end_at: z.iso.datetime({ offset: true }),
+  // Stored in UTC ("...Z"): the row's date key, the notifier's "tomorrow"
+  // prefix query and string sorting all assume it. A caller offset such as
+  // "+09:00" used to be stored as given and drifted all three (review F14).
+  start_at: z.iso.datetime({ offset: true }).transform(toUtcIso),
+  end_at: z.iso.datetime({ offset: true }).transform(toUtcIso),
 });
+
+function toUtcIso(x: string): string {
+  return new Date(x).toISOString();
+}
 
 reservationRoutes.use("/v1/g/:garage/reservations", idempotency());
 reservationRoutes.post("/v1/g/:garage/reservations", async (c) => {
