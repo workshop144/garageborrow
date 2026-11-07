@@ -252,7 +252,19 @@ c. Attach the same permissions to this role that your local
 AWS profile uses for `sam deploy` (CloudFormation, IAM, Lambda,
 DynamoDB, S3, CloudFront, Cognito, EventBridge, SSM, SNS, SES, SQS,
 CloudWatch alarms and CloudWatch Logs: log groups and the saved
-`sms-capped` Logs Insights query).
+`sms-capped` Logs Insights query). After `sam deploy` the job also
+publishes the web build, so the role needs
+`cloudformation:DescribeStacks` on the `garageborrow-prod` stack,
+`s3:ListBucket` on `garageborrow-web-prod` and `s3:PutObject` on
+`garageborrow-web-prod/*`, and `cloudfront:CreateInvalidation` on
+the distribution, plus `cloudfront:*ResponseHeadersPolicy` for the
+security headers policy the template creates.
+
+The web app gets its API URL and Cognito pool and client ids from
+`/config.json`, which the deploy job writes from the stack outputs
+(`ApiUrl`, `UserPoolId`, `UserPoolClientId`). Do not set
+`VITE_API_BASE_URL` or the `VITE_COGNITO_*` variables for a
+deployed build; they are only for local development.
 d. Update `.github/workflows/deploy.yml` to use the role via
 `aws-actions/configure-aws-credentials@v4` with `role-to-assume`
 pointing at the new role's ARN. Remove any AWS access key

@@ -7,6 +7,7 @@ import { itemKey } from "@garageborrow/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { deliverPush, setPushDriver } from "../lib/channels.js";
+import { PUBLIC_ROUTES } from "../lib/public-routes.js";
 import { isAllowedPushEndpoint, MAX_PUSH_SUBSCRIPTIONS } from "../lib/push-endpoint.js";
 import { createApp } from "../index.js";
 import {
@@ -254,12 +255,7 @@ describe("F10: push subscriptions", () => {
 });
 
 describe("F13: auth is enforced per route, not by a catch-all", () => {
-  const PUBLIC = new Set([
-    "GET /v1/health",
-    "GET /v1/openapi.json",
-    "GET /v1/docs",
-    "POST /v1/auth/start",
-  ]);
+  const PUBLIC = new Set<string>(PUBLIC_ROUTES);
 
   it("an unknown path is a 404, not a 401", async () => {
     const res = await createApp().request("/v1/no-such-route");

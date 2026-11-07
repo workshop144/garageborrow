@@ -31,8 +31,21 @@ verify-phase-3:
     set -euo pipefail
     site="$(gh variable get SITE_URL)"
     curl -fsS -o /dev/null -w "web %{http_code}\n" "$site/"
-    curl -fsS -o /dev/null -w "api %{http_code}\n" "$site/v1/health"
-    gh run list --workflow deploy.yml --branch main --limit 1 --json conclusion --jq '.[0].conclusion' | grep -qx success && echo "deploy success"
+    # The API is on API Gateway, not behind CloudFront: $site/v1/health would
+    # get the SPA fallback (200 index.html) and pass falsely.
+    api="$(aws cloudformation describe-stacks --stack-name garageborrow-prod --region us-east-2 \
+      --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)"
+    # Each check on its own line: under set -e a failure inside `a && b` does
+    # not stop the script, so `check && echo ok` would pass silently.
+    curl -fsS "$api/v1/health" | jq -e '.status == "ok"' >/dev/null
+    echo "api health ok"
+    # The deployed app reads its API URL from config.json; it must point at that API.
+    curl -fsS "$site/config.json" | jq -e --arg api "$api" '.apiBaseUrl == $api' >/dev/null
+    echo "config.json ok"
+    curl -fsSI "$site/" | grep -qi '^content-security-policy:.*frame-ancestors'
+    echo "security headers ok"
+    gh run list --workflow deploy.yml --branch main --limit 1 --json conclusion --jq '.[0].conclusion' | grep -qx success
+    echo "deploy success"
 
 # Fail when code paths change without a STATE.md change (same check CI runs)
 state-guard base="origin/main":

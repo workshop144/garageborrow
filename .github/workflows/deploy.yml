@@ -84,6 +84,16 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload web build
+        # The PWA built above. The deploy job adds config.json (stack outputs)
+        # and copies it to the web bucket; it builds nothing itself.
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 1
+
   deploy:
     needs: build
     if: vars.DEPLOY_ENABLED == 'true'
@@ -128,3 +138,46 @@ jobs:
               "SiteUrl=${{ vars.SITE_URL }}" \
               "TenantName=${{ vars.TENANT_NAME || 'Garage Borrow' }}" \
               "AppTimezone=${{ vars.APP_TIMEZONE || 'America/New_York' }}"
+
+      # Publish the PWA (2026-11-07 review F2). Plain aws commands only: the
+      # API URL and Cognito ids exist once the stack does, so they go into
+      # /config.json (read by apps/web/src/lib/runtime-config.ts at start-up)
+      # instead of into a build this job may not run.
+      - name: Download web build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-dist
+          path: web-dist
+
+      - name: Write runtime config from stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+          --stack-name garageborrow-prod --region us-east-2 \
+          --query "{apiBaseUrl: join('', Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue), userPoolId: join('', Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue), userPoolClientId: join('', Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue)}" \
+          --output json > web-dist/config.json
+
+      - name: Read CloudFront distribution id
+        id: cdn
+        run: |
+          aws cloudformation describe-stacks \
+          --stack-name garageborrow-prod --region us-east-2 \
+          --query "join('', ['distribution_id=', join('', Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue)])" \
+          --output text >> "$GITHUB_OUTPUT"
+
+      - name: Upload hashed assets (cached for a year)
+        run: |
+          aws s3 sync web-dist/assets s3://garageborrow-web-prod/assets \
+          --cache-control "public, max-age=31536000, immutable"
+
+      - name: Upload the rest (revalidated on every load)
+        # index.html, sw.js, config.json, the manifest and icons. Old hashed
+        # assets stay, so a tab still running the previous build can load them.
+        run: |
+          aws s3 sync web-dist s3://garageborrow-web-prod \
+          --exclude "assets/*" --cache-control "no-cache"
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+          --distribution-id ${{ steps.cdn.outputs.distribution_id }} \
+          --paths "/*"

@@ -5,6 +5,7 @@ import "@fontsource/permanent-marker/400.css";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
 import "./index.css";
+import { loadRuntimeConfig } from "./lib/runtime-config";
 import { initSentry } from "./lib/sentry";
 
 initSentry();
@@ -14,8 +15,11 @@ if (!rootEl) {
   throw new Error("Root element not found");
 }
 
-createRoot(rootEl).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// The API URL and Cognito ids come from /config.json, written at deploy time.
+void loadRuntimeConfig().finally(() => {
+  createRoot(rootEl).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+});

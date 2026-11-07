@@ -1,8 +1,7 @@
 import { scrubPhones } from "@garageborrow/shared/scrub-phones";
 
+import { apiBase } from "./runtime-config";
 import { captureError } from "./sentry";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/v1";
 
 export class ApiError extends Error {
   readonly code: string;
@@ -51,7 +50,7 @@ export async function apiRequest<T>(path: string, opts: RequestOpts = {}): Promi
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  const url = path.startsWith("http") ? path : `${apiBase()}${path}`;
   const init: RequestInit = {
     method: opts.method ?? "GET",
     headers,
