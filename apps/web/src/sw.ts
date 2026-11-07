@@ -107,10 +107,29 @@ self.addEventListener("push", (event) => {
   );
 });
 
+const NOTIFICATIONS_PATH = "/me/notifications";
+
+// Only ever open a page of this app: a push payload url on another origin
+// (or a javascript:/data: url) falls back to the notifications list instead
+// of turning a notification into an open redirect.
+function sameOriginPath(url: unknown): string {
+  if (typeof url !== "string" || url === "") return NOTIFICATIONS_PATH;
+  try {
+    const resolved = new URL(url, self.location.origin);
+    if (resolved.origin !== self.location.origin) return NOTIFICATIONS_PATH;
+    const path = `${resolved.pathname}${resolved.search}${resolved.hash}`;
+    // "https://<us>//evil.example/x" has our origin but the path
+    // "//evil.example/x", which openWindow reads as protocol-relative.
+    return path.startsWith("//") ? NOTIFICATIONS_PATH : path;
+  } catch {
+    return NOTIFICATIONS_PATH;
+  }
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = (event.notification.data ?? {}) as { url?: string };
-  const target = data.url ?? "/me/notifications";
+  const target = sameOriginPath(data.url);
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (windows) => {
       for (const client of windows) {

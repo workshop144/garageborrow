@@ -5,11 +5,11 @@
 default:
     @just --list
 
-# lint + typecheck + test + build (what CI's check job runs, minus Lighthouse)
+# lint + typecheck + test (with coverage floors) + build (what CI's check job runs, minus Lighthouse)
 check:
     pnpm lint
     pnpm typecheck
-    pnpm test
+    pnpm test:coverage
     pnpm build
 
 # Phases 0 and 1: v1.0 code and security fixes, covered by the test suites

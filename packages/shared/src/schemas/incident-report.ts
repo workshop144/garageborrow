@@ -20,6 +20,9 @@ export const IncidentReportSchema = z.object({
   status: IncidentStatusSchema,
   created_at: IsoDateTime,
   resolved_at: IsoDateTime.optional(),
+  // Written by the owner when updating the incident; separate from the
+  // reporter's suggested_action.
+  resolution_notes: z.string().optional(),
 });
 
 export type IncidentReport = z.infer<typeof IncidentReportSchema>;
