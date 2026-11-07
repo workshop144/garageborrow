@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -53,6 +54,46 @@ describe("usePullToRefresh", () => {
     });
     await waitFor(() => expect(result.current.refreshing).toBe(false));
     expect(result.current.pull).toBe(0);
+  });
+
+  it("calls onRefresh exactly once under StrictMode", () => {
+    const onRefresh = vi.fn(() => new Promise<void>(() => undefined));
+    const { result } = renderHook(
+      () => usePullToRefresh({ onRefresh, threshold: 40, resistance: 1 }),
+      { wrapper: StrictMode },
+    );
+    touch("touchstart", 0);
+    touch("touchmove", 50);
+    touch("touchend");
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(result.current.refreshing).toBe(true);
+  });
+
+  it("ignores a second pull while a refresh is in flight", async () => {
+    let finish!: () => void;
+    const onRefresh = vi.fn(() => new Promise<void>((r) => (finish = r)));
+    const { result } = renderHook(() =>
+      usePullToRefresh({ onRefresh, threshold: 40, resistance: 1 }),
+    );
+    touch("touchstart", 0);
+    touch("touchmove", 50);
+    touch("touchend");
+    touch("touchstart", 0);
+    touch("touchmove", 50);
+    touch("touchend");
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(result.current.refreshing).toBe(true);
+
+    await act(async () => {
+      finish();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.refreshing).toBe(false));
+    // Once the first refresh settles, a new pull refreshes again.
+    touch("touchstart", 0);
+    touch("touchmove", 50);
+    touch("touchend");
+    expect(onRefresh).toHaveBeenCalledTimes(2);
   });
 
   it("snaps back without refreshing on a short pull or cancel", () => {

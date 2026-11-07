@@ -147,7 +147,6 @@ export default function Login(): JSX.Element {
               <input
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                pattern="\d{6}"
                 maxLength={6}
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}

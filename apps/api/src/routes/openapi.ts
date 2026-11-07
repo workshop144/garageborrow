@@ -61,6 +61,12 @@ const PATHS: Record<string, Record<string, OpenApiPathItem>> = {
   "/v1/me/push-subscription": {
     post: { summary: "Register a web-push subscription", tags: ["me"] },
   },
+  "/v1/me/stuff": {
+    get: {
+      summary: "My Stuff for one garage (?garage=): loans, reservations, waitlist",
+      tags: ["me"],
+    },
+  },
   "/v1/me/notifications": {
     get: { summary: "List notifications (last 30 days, paginated)", tags: ["me"] },
   },

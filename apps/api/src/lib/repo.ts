@@ -646,17 +646,22 @@ export async function listWaitlist(garage_id: string, item_id: string): Promise<
   return (r.Items ?? []) as WaitlistEntry[];
 }
 
-// Every waitlist entry in a garage that belongs to this phone (any item).
-export async function listWaitlistForPhone(
-  garage_id: string,
-  phone: string,
-): Promise<WaitlistEntry[]> {
+// Every waitlist entry in a garage (all items, all members).
+export async function listWaitlistByGarage(garage_id: string): Promise<WaitlistEntry[]> {
   const r = await queryAll({
     TableName: table(),
     KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
     ExpressionAttributeValues: { ":pk": `TENANT#${garage_id}`, ":sk": "WAIT#" },
   });
-  return ((r.Items ?? []) as WaitlistEntry[]).filter((w) => w.borrower_phone === phone);
+  return (r.Items ?? []) as WaitlistEntry[];
+}
+
+// Every waitlist entry in a garage that belongs to this phone (any item).
+export async function listWaitlistForPhone(
+  garage_id: string,
+  phone: string,
+): Promise<WaitlistEntry[]> {
+  return (await listWaitlistByGarage(garage_id)).filter((w) => w.borrower_phone === phone);
 }
 
 export async function deleteWaitlist(

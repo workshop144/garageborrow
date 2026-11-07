@@ -10,6 +10,7 @@ import {
   useUpdateAdminItem,
 } from "../../../hooks/useAdminItems";
 import { uploadPhoto } from "../../../lib/uploadPhoto";
+import { ApiError } from "../../../lib/api";
 
 type Props = {
   open: boolean;
@@ -81,6 +82,7 @@ export function ItemEditDrawer({ open, onClose, item, knownCategories }: Props):
   const [draft, setDraft] = useState<ItemPatchBody>({});
   const [photoUploading, setPhotoUploading] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Re-seed the draft each time the drawer opens or is pointed at another
   // item. Done during render (React's "adjust state when a prop changes"
@@ -91,6 +93,7 @@ export function ItemEditDrawer({ open, onClose, item, knownCategories }: Props):
   });
   if (seededFor.open !== open || seededFor.item !== item) {
     setSeededFor({ open, item });
+    setSaveError(null);
     if (open) {
       setDraft(
         item
@@ -134,10 +137,16 @@ export function ItemEditDrawer({ open, onClose, item, knownCategories }: Props):
 
   async function submit(): Promise<void> {
     if (!draft.name || !draft.category) return;
-    if (item) {
-      await updateMut.mutateAsync({ itemId: item.id, body: draft });
-    } else {
-      await createMut.mutateAsync(draft);
+    setSaveError(null);
+    try {
+      if (item) {
+        await updateMut.mutateAsync({ itemId: item.id, body: draft });
+      } else {
+        await createMut.mutateAsync(draft);
+      }
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : "Couldn't save the tool.");
+      return;
     }
     onClose();
   }
@@ -296,6 +305,12 @@ export function ItemEditDrawer({ open, onClose, item, knownCategories }: Props):
             />
           </div>
         </label>
+
+        {saveError ? (
+          <p role="alert" className="text-xs text-status-overdue">
+            {saveError}
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap gap-2 pt-2">
           <button

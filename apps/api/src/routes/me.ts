@@ -8,15 +8,29 @@ import {
   patchSchemaOf,
   tierRank,
 } from "@garageborrow/shared";
-import type { GarageMembership, Reservation, User } from "@garageborrow/shared";
+import type {
+  GarageMembership,
+  Loan,
+  Reservation,
+  User,
+  WaitlistEntry,
+} from "@garageborrow/shared";
 
 import { mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
-import { memberDonationView } from "../lib/member-views.js";
+import {
+  memberDonationView,
+  memberLoanView,
+  memberReservationView,
+  memberWaitlistView,
+  myStuffItemView,
+  type MyStuffItemView,
+} from "../lib/member-views.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import {
   getGarage,
+  getItem,
   getMembership,
   getNotification,
   getUserAnyGarage,
@@ -29,6 +43,7 @@ import {
   listPushSubscriptions,
   listUserIndexRows,
   listUserProfiles,
+  listWaitlistByGarage,
   listWaitlistForPhone,
   listWishlistRequests,
   putMembership,
@@ -41,6 +56,7 @@ import {
 } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
 import { requireAuth } from "../middleware/auth.js";
+import { resolveGarageContext } from "../middleware/garage-context.js";
 import { idempotency, requireIdempotencyKey } from "../middleware/idempotency.js";
 
 export const meRoutes = new Hono<AppEnv>();
@@ -464,6 +480,72 @@ meRoutes.get("/v1/me/donations", async (c) => {
   all.sort((a, b) => b.created_at.localeCompare(a.created_at));
   const { page, next_cursor } = paginate(all.map(memberDonationView), params);
   return c.json(next_cursor ? { donations: page, next_cursor } : { donations: page });
+});
+
+// GET /v1/me/stuff?garage=<id> — My Stuff for one garage: the caller's loans
+// that are out, their pending or approved reservations that have not ended,
+// their waitlist places (position recomputed from joined_at, the stored one
+// is not renumbered when someone leaves) and their borrow counters. The same
+// garage checks as /v1/g/:garage routes apply (404 unknown garage, 403 for a
+// non-member or a member whose deletion is pending). Loans and reservations
+// come from GSI1 (keyed by the caller's phone, eventually consistent), so a
+// row written a moment ago may show on the next refresh.
+meRoutes.get("/v1/me/stuff", async (c) => {
+  const user = mustUser(c);
+  const garageId = c.req.query("garage");
+  if (!garageId) throw new ApiError("bad_request", "Missing ?garage");
+  const { garage, membership } = await resolveGarageContext(user, garageId);
+  const now = Date.now();
+  const mine = (row: Record<string, unknown>): boolean =>
+    row["garage_id"] === garage.id && row["borrower_phone"] === user.phone;
+
+  const [loanRows, reservationRows, waitlistRows] = await Promise.all([
+    listUserIndexRows(user.phone, "LOAN#"),
+    listUserIndexRows(user.phone, "RES#"),
+    listWaitlistByGarage(garage.id),
+  ]);
+  const loans = (loanRows.filter(mine) as unknown as Loan[])
+    .filter((l) => l.status === "active" || l.status === "overdue")
+    .sort((a, b) => a.expected_return_at.localeCompare(b.expected_return_at));
+  const reservations = (reservationRows.filter(mine) as unknown as Reservation[])
+    .filter(
+      (r) => (r.status === "pending" || r.status === "approved") && Date.parse(r.end_at) > now,
+    )
+    .sort((a, b) => a.start_at.localeCompare(b.start_at));
+  const lines = new Map<string, WaitlistEntry[]>();
+  for (const w of waitlistRows) {
+    const line = lines.get(w.item_id) ?? [];
+    line.push(w);
+    lines.set(w.item_id, line);
+  }
+  const waitlist: WaitlistEntry[] = [];
+  for (const line of lines.values()) {
+    line.sort((a, b) => a.joined_at.localeCompare(b.joined_at));
+    line.forEach((w, idx) => {
+      if (w.borrower_phone === user.phone) waitlist.push({ ...w, position: idx + 1 });
+    });
+  }
+  waitlist.sort((a, b) => a.joined_at.localeCompare(b.joined_at));
+
+  const itemIds = [...new Set([...loans, ...reservations, ...waitlist].map((row) => row.item_id))];
+  const items = new Map(
+    await Promise.all(itemIds.map(async (id) => [id, await getItem(garage.id, id)] as const)),
+  );
+  const itemView = (id: string): MyStuffItemView => myStuffItemView(items.get(id), id);
+
+  return c.json({
+    loans: loans.map((l) => ({ loan: memberLoanView(l), item: itemView(l.item_id) })),
+    reservations: reservations.map((r) => ({
+      reservation: memberReservationView(r),
+      item: itemView(r.item_id),
+    })),
+    waitlist: waitlist.map((w) => ({ entry: memberWaitlistView(w), item: itemView(w.item_id) })),
+    stats: {
+      borrows_total: membership.borrows_total,
+      returns_on_time: membership.returns_on_time,
+      borrows_active: membership.borrows_active,
+    },
+  });
 });
 
 meRoutes.post("/v1/me/notifications/read-all", async (c) => {

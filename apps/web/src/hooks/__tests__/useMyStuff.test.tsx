@@ -56,19 +56,14 @@ describe("useMyStuff", () => {
     expect(result.current.data?.stats.borrows_total).toBe(4);
   });
 
-  it("treats a 404 as an empty My Stuff", async () => {
+  it("surfaces a 404 (unknown garage) as an error, not an empty list", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ error: { code: "not_found", message: "Route not found" } }, 404),
+      jsonResponse({ error: { code: "not_found", message: "Garage not found" } }, 404),
     );
     const { wrapper } = setup();
     const { result } = renderHook(() => useMyStuff(), { wrapper });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual({
-      loans: [],
-      reservations: [],
-      waitlist: [],
-      stats: { borrows_total: 0, returns_on_time: 0, borrows_active: 0 },
-    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toMatchObject({ code: "not_found", status: 404 });
   });
 
   it("surfaces other errors", async () => {
