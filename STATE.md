@@ -56,9 +56,9 @@ Last updated: 2026-11-07 by Claude (agent): 2026-11-07 review fixes (fix/2026-11
 
 ## Security grade
 
-Grade: **A** (2026-11-07, after security review round 1, PRs #51 to #53; rubric: A = no open Medium or higher and every open Low documented with a reason).
+Grade: **A** (2026-11-07, after the 2026-11-07 review fixes, PRs #54 to #56; rubric: A = no open Medium or higher and every open Low documented with a reason; A+ also needs no open finding above Informational).
 
-Round 1 findings: GB-R1-1 display_name unbounded (fixed, #51), GB-R1-2 photo EXIF served to members (fixed, #52), GB-R1-3 sign-in SMS lockout (accepted and documented, #53). Not A+ because the Lows below are still open.
+2026-11-07 review (12 findings, none Medium or higher): F1 public routes behind the gateway authorizer (fixed, #56), F2 deploy never published the web app (fixed, #56), F3 cleaner could delete a cancelled account (fixed, #55), F4 membership puts lost counter bumps (fixed, #55), F5 wishlist cancel/decide unconditional (fixed, #55), F6 no CloudFront security headers (fixed, #56), F7 raw instance rows to members (fixed, #54), F9 unbounded default duration (fixed, #54), F10 push endpoints unrestricted (fixed, #54), F11 image decode size (fixed, #54), F13 global requireAuth in meRoutes (fixed, #54), F14 reservation offsets (fixed, #55). Round 1 before that: GB-R1-1 and GB-R1-2 fixed (#51, #52), GB-R1-3 accepted (#53). Not A+ because the Lows below are still open.
 
 Open Lows, each with its reason:
 
@@ -68,12 +68,13 @@ Open Lows, each with its reason:
 - Owner self-deletion leaves a garage with an `owner_phone` that cannot sign in. Reason: blocked on an operator decision (refuse owner deletion until ownership transfer exists, or build transfer).
 - deepmerge 4.3.1 (GHSA-gcqx-w48m-w2h4, low) via workbox-build. Reason: build-time only, merges trusted config, no patched release exists.
 - Lambda IAM grants are not linted against the DynamoDB commands each function sends. Reason: defense-in-depth tooling, not a vulnerability; tracked in Open below.
+- Web push is not wired (the push driver is a no-op). Reason: not a vulnerability today; F10 already limits what a member can register (known push hosts, https, 10 per member) and the notifier re-checks the host before posting, so wiring web-push later adds no SSRF path. Needs the VAPID keypair from Phase 3.
 
 Blocked on the operator or money (documented Lows):
 
 - `security-review.yml` skips because the `ANTHROPIC_API_KEY` secret is unset; setting it bills API credits. The local `/security-review` step is the review that runs.
 - Leak drill (`scripts/leak-drill.sh`) never run against GitHub; it needs a real push of a fake secret, which the operator should watch.
-- Phase 3 first deploy (domain, ACM, OIDC role, `DEPLOY_ENABLED`, Cognito SMS production approval, AWS Budgets) needs sign-ins and AWS spend. Nothing is live, so no internet-facing surface exists yet.
+- Phase 3 first deploy (domain, ACM, OIDC role, `DEPLOY_ENABLED`, Cognito SMS production approval, AWS Budgets) needs sign-ins and AWS spend. Nothing is live, so no internet-facing surface exists yet. The F1/F2/F6 fixes (public routes, web publish, security headers) are only proven by template and workflow tests until then; run `just verify-phase-3` after the first deploy, and give the deploy role the extra permissions docs/deploy.md now lists.
 
 ## Open / BLOCKED
 
