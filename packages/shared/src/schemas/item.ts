@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { IsoDateTime, NonNegInt, PhoneE164, PosInt, TierNameSchema } from "./common.js";
 
+// Longest loan a member can take (POST /loans caps duration_days at this). An
+// item's default duration is bounded by it too: an unbounded default made
+// every borrow without an explicit duration a 500 (Invalid Date) or a loan
+// longer than the cap (2026-11-07 review F9).
+export const MAX_LOAN_DAYS = 60;
+
 export const ItemStatusSchema = z.enum([
   "available",
   "all_loaned",
@@ -20,7 +26,7 @@ export const ItemSchema = z.object({
   category: z.string().min(1),
   primary_photo_key: z.string().min(1),
   handling_notes: z.string().optional(),
-  default_duration_days: PosInt.default(3),
+  default_duration_days: PosInt.max(MAX_LOAN_DAYS).default(3),
   requires_approval: z.boolean().default(false),
   min_tier: TierNameSchema.default("howdy"),
   auto_approve_tier: TierNameSchema.default("family"),

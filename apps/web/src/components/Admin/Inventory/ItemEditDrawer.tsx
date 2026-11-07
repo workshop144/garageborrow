@@ -230,6 +230,7 @@ export function ItemEditDrawer({ open, onClose, item, knownCategories }: Props):
             <input
               type="number"
               min={1}
+              max={60}
               value={draft.default_duration_days ?? 3}
               onChange={(e) =>
                 setDraft({ ...draft, default_duration_days: Number(e.target.value) })

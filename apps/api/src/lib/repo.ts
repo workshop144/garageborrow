@@ -989,6 +989,11 @@ export async function putPushSubscription(p: PushSubscription, hash: string): Pr
   await ddb().send(new PutCommand({ TableName: table(), Item: withKey(k, p) }));
 }
 
+// Removes one stored push subscription by its sort key (`PUSH#<hash>`).
+export async function deletePushSubscription(phone: string, sk: string): Promise<void> {
+  await ddb().send(new DeleteCommand({ TableName: table(), Key: { PK: `USER#${phone}`, SK: sk } }));
+}
+
 export async function listPushSubscriptions(phone: string): Promise<PushSubscription[]> {
   const r = await queryAll({
     TableName: table(),

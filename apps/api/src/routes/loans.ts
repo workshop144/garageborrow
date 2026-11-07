@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { resolveItemAccess } from "@garageborrow/shared";
+import { MAX_LOAN_DAYS, resolveItemAccess } from "@garageborrow/shared";
 import type { Loan } from "@garageborrow/shared";
 import { z } from "zod";
 
@@ -37,7 +37,6 @@ function loanChanged(): ApiError {
 loanRoutes.use("/v1/g/:garage/loans", requireAuth(), loadGarageContext());
 loanRoutes.use("/v1/g/:garage/loans/*", requireAuth(), loadGarageContext());
 
-export const MAX_LOAN_DAYS = 60;
 // Self-serve extensions per loan (3 days each); past that the owner decides.
 export const MAX_EXTENSIONS = 3;
 
@@ -61,7 +60,9 @@ loanRoutes.post("/v1/g/:garage/loans", async (c) => {
   // Same answer as a missing item: tier-hidden items are not acknowledged.
   if (access === "hidden") throw new ApiError("not_found", "Item not found");
   const ts = nowIso();
-  const durationDays = body.duration_days ?? item.default_duration_days;
+  // Rows written before the schema bound may hold a larger default; clamp so
+  // a borrow never runs past MAX_LOAN_DAYS or overflows Date.
+  const durationDays = Math.min(body.duration_days ?? item.default_duration_days, MAX_LOAN_DAYS);
   const expectedReturnAt = new Date(Date.now() + durationDays * 86400_000).toISOString();
   const needsApproval = access === "request" || item.requires_approval;
   const window = { start: Date.parse(ts), end: Date.parse(expectedReturnAt) };
