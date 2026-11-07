@@ -7,8 +7,7 @@ import {
   type ICognitoUserPoolData,
 } from "amazon-cognito-identity-js";
 
-const userPoolId = import.meta.env.VITE_COGNITO_USER_POOL_ID ?? "";
-const clientId = import.meta.env.VITE_COGNITO_CLIENT_ID ?? "";
+import { cognitoIds } from "../runtime-config";
 
 // The session lives only in React state (a reload signs you out), so the
 // library's token cache must not outlive the page either. Its default is
@@ -44,20 +43,21 @@ export function purgePersistedTokens(): void {
   }
 }
 
-const poolData: ICognitoUserPoolData = {
-  UserPoolId: userPoolId,
-  ClientId: clientId,
-  Storage: memoryStorage,
-};
-
 let _pool: CognitoUserPool | null = null;
 function pool(): CognitoUserPool {
   if (!_pool) {
+    // Read on first use: /config.json (lib/runtime-config.ts) loads before render.
+    const { userPoolId, clientId } = cognitoIds();
     if (!userPoolId || !clientId) {
       throw new Error(
-        "Cognito not configured. Set VITE_COGNITO_USER_POOL_ID and VITE_COGNITO_CLIENT_ID.",
+        "Cognito not configured. Deploy writes /config.json; locally set VITE_COGNITO_USER_POOL_ID and VITE_COGNITO_CLIENT_ID.",
       );
     }
+    const poolData: ICognitoUserPoolData = {
+      UserPoolId: userPoolId,
+      ClientId: clientId,
+      Storage: memoryStorage,
+    };
     _pool = new CognitoUserPool(poolData);
   }
   return _pool;
@@ -132,6 +132,7 @@ export async function refreshSession(refreshToken: string, username: string): Pr
 // Revokes the refresh token server-side (and the tokens minted from it), so a
 // copy taken earlier stops working. Best effort: sign-out never waits on it.
 async function revokeRefreshToken(refreshToken: string): Promise<void> {
+  const { userPoolId, clientId } = cognitoIds();
   const region = userPoolId.split("_")[0];
   if (!region || !clientId) return;
   await fetch(`https://cognito-idp.${region}.amazonaws.com/`, {

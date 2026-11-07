@@ -477,6 +477,7 @@ Resources:
           Compress: true
           # Managed CachingOptimized policy — no auth on static PWA assets.
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
         CacheBehaviors:
           - PathPattern: /img/*
             TargetOriginId: imagesOrigin
@@ -485,6 +486,7 @@ Resources:
             CachedMethods: [GET, HEAD]
             Compress: true
             CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
         # SPA fallback: 403/404 → /index.html with HTTP 200 so client-side
         # routing can take over. (Spec called this a "ResponseHeadersPolicy"
         # but the actual mechanism is CloudFront CustomErrorResponses.)
@@ -497,6 +499,42 @@ Resources:
             ResponseCode: 200
             ResponsePagePath: /index.html
             ErrorCachingMinTTL: 10
+
+  # Security headers on every CloudFront response (2026-11-07 review F6). The
+  # meta CSP in apps/web/index.html cannot carry frame-ancestors (browsers
+  # ignore it there), so without this header the PWA could be framed. The CSP
+  # below must stay equal to the meta one (security-headers-template.test.ts).
+  # Response headers policies cost nothing.
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub garageborrow-security-headers-${Stage}
+        Comment: CSP, HSTS, nosniff, frame and referrer policy for the PWA
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.cloudfront.net https://*.s3.us-east-2.amazonaws.com; connect-src 'self' https://*.execute-api.us-east-2.amazonaws.com https://cognito-idp.us-east-2.amazonaws.com; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            # Off: the site may sit on a subdomain of a domain that serves
+            # other hosts; HSTS for those is that domain's own decision.
+            IncludeSubdomains: false
+            Preload: false
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+              Override: true
 
   WebBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -538,8 +576,10 @@ Resources:
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
-      StageName: !Ref Stage
-      # Auto-deploy to the default stage is on by default for AWS::Serverless::HttpApi.
+      # No StageName: SAM then deploys the $default stage, served at the API
+      # root. A named stage puts "/<stage>" in front of every path (the ApiUrl
+      # output lacked it) and in the rawPath Hono routes on, so /v1/* would
+      # never match. The stack and resource names already carry the stage.
       CorsConfiguration:
         AllowOrigins:
           - !Ref SiteUrl
@@ -675,6 +715,44 @@ Resources:
             ApiId: !Ref HttpApi
             Method: ANY
             Path: /
+        # Public routes (2026-11-07 review F1). The API's DefaultAuthorizer
+        # (Cognito JWT) would answer these 401 before the Lambda runs, so a
+        # signed-out invitee could never start a sign-in and /v1/health could
+        # not be checked. Each route is explicit; everything else keeps the
+        # authorizer, and the Lambda still runs requireAuth on its own routes.
+        # infra-public-routes.test.ts checks this list against the API's.
+        AuthStart:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: POST
+            Path: /v1/auth/start
+            Auth:
+              Authorizer: NONE
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: GET
+            Path: /v1/health
+            Auth:
+              Authorizer: NONE
+        OpenApiJson:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: GET
+            Path: /v1/openapi.json
+            Auth:
+              Authorizer: NONE
+        ApiDocs:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: GET
+            Path: /v1/docs
+            Auth:
+              Authorizer: NONE
 
   ApiFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -1122,6 +1200,11 @@ Outputs:
     Value: !Ref ImagesBucket
     Export:
       Name: !Sub garageborrow-${Stage}-ImagesBucketName
+  DistributionId:
+    Description: CloudFront distribution id (the deploy job invalidates it).
+    Value: !Ref Distribution
+    Export:
+      Name: !Sub garageborrow-${Stage}-DistributionId
   WebBucketName:
     Description: S3 bucket hosting the static PWA build.
     Value: !Ref WebBucket

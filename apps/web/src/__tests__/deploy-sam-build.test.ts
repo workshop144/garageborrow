@@ -60,6 +60,11 @@ const stepIndex = (steps: string[], re: RegExp) => {
   return hits[0];
 };
 
+// The SAM build artifact's upload and download steps (the web build is a
+// second artifact, F2).
+const SAM_UPLOAD = /uses: actions\/upload-artifact@[\s\S]*path: \.aws-sam\/build$/m;
+const SAM_DOWNLOAD = /uses: actions\/download-artifact@[\s\S]*path: \.aws-sam\/build$/m;
+
 const holdsIdToken = (body: string) => /^ {6}id-token: write$/m.test(body);
 const buildSteps = stepsOf(job("build"));
 const deploySteps = stepsOf(job("deploy"));
@@ -176,8 +181,8 @@ describe("deploy sam build hardening (S4-3)", () => {
   });
 
   it("the deploy job deploys exactly what the build job built", () => {
-    const upload = buildSteps[stepIndex(buildSteps, /uses: actions\/upload-artifact@/)];
-    const download = deploySteps[stepIndex(deploySteps, /uses: actions\/download-artifact@/)];
+    const upload = buildSteps[stepIndex(buildSteps, SAM_UPLOAD)];
+    const download = deploySteps[stepIndex(deploySteps, SAM_DOWNLOAD)];
     expect(upload).toMatch(/^ {10}path: \.aws-sam\/build$/m);
     expect(upload).toMatch(/^ {10}include-hidden-files: true$/m);
     const name = /^ {10}name: (\S+)$/m.exec(upload)?.[1];
@@ -190,7 +195,7 @@ describe("deploy sam build hardening (S4-3)", () => {
   });
 
   it("AWS credentials are configured directly before sam deploy, after the download", () => {
-    const download = stepIndex(deploySteps, /uses: actions\/download-artifact@/);
+    const download = stepIndex(deploySteps, SAM_DOWNLOAD);
     const setupSam = stepIndex(deploySteps, /uses: aws-actions\/setup-sam@/);
     const creds = stepIndex(deploySteps, /uses: aws-actions\/configure-aws-credentials@/);
     const samDeploy = stepIndex(deploySteps, /sam deploy/);
@@ -209,6 +214,39 @@ describe("deploy sam build hardening (S4-3)", () => {
     // esbuild writes the per-bundle list of runtime imports the gate reads.
     expect(esbuildConfig).toMatch(/metafile: true/);
     expect(esbuildConfig).toMatch(/dist\/externals\.json/);
+  });
+
+  it("publishes the web build with plain aws commands after sam deploy (review F2)", () => {
+    const samDeploy = stepIndex(deploySteps, /sam deploy/);
+    const upload = buildSteps[stepIndex(buildSteps, /path: apps\/web\/dist$/m)];
+    expect(upload).toMatch(/uses: actions\/upload-artifact@[0-9a-f]{40}\b/);
+    const name = /^ {10}name: (\S+)$/m.exec(upload)?.[1];
+    expect(name).toBe("web-dist");
+    const download = stepIndex(deploySteps, /^ {10}name: web-dist$/m);
+    const config = stepIndex(deploySteps, />\s*web-dist\/config\.json$/m);
+    const cdn = stepIndex(deploySteps, /--output text >> "\$GITHUB_OUTPUT"/);
+    const assets = stepIndex(deploySteps, /aws s3 sync web-dist\/assets /);
+    const rest = stepIndex(deploySteps, /aws s3 sync web-dist s3:/);
+    const invalidate = stepIndex(deploySteps, /aws cloudfront create-invalidation/);
+    // Outputs exist only after the deploy; the config lands before the sync.
+    for (const i of [download, config, cdn, assets, rest, invalidate]) {
+      expect(i).toBeGreaterThan(samDeploy);
+    }
+    expect(config).toBeGreaterThan(download);
+    expect(rest).toBeGreaterThan(config);
+    expect(invalidate).toBeGreaterThan(rest);
+    // config.json carries the three values runtime-config.ts reads.
+    for (const key of ["apiBaseUrl", "userPoolId", "userPoolClientId"]) {
+      expect(deploySteps[config]).toContain(`${key}: join(`);
+    }
+    for (const out of ["ApiUrl", "UserPoolId", "UserPoolClientId", "DistributionId"]) {
+      expect(template).toMatch(new RegExp(`^ {2}${out}:\n {4}Description:`, "m"));
+    }
+    // Everything but the hashed assets is revalidated, so a deploy is live at once.
+    expect(deploySteps[rest]).toMatch(/--exclude "assets\/\*" --cache-control "no-cache"/);
+    // The web bucket the deploy writes is the template's.
+    expect(template).toMatch(/BucketName: !Sub garageborrow-web-\$\{Stage\}/);
+    expect(deploySteps[rest]).toContain("s3://garageborrow-web-prod");
   });
 
   it("setup-sam is SHA-pinned and installs an exact SAM CLI version in both jobs", () => {
