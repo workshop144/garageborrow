@@ -167,6 +167,39 @@ describe("sw registration", () => {
       ).resolves.toBeNull();
     });
   });
+
+  // GB-R1-2: variants appear seconds after an upload; until then CloudFront
+  // turns the 403 into index.html with status 200. Never cache that as a photo.
+  describe("image cache plugin", () => {
+    type Plugin = {
+      cacheWillUpdate: (i: { response: Response }) => Promise<Response | null>;
+    };
+    const plugin = (): Plugin => {
+      const images = wb.routes[1]?.handler as { opts: { plugins: unknown[] } };
+      return images.opts.plugins[0] as Plugin;
+    };
+
+    it("stores an OK image response", async () => {
+      const img = new Response("x", { status: 200, headers: { "content-type": "image/jpeg" } });
+      await expect(plugin().cacheWillUpdate({ response: img })).resolves.toBe(img);
+    });
+
+    it("does not store the SPA fallback page served with status 200", async () => {
+      const html = new Response("<html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      await expect(plugin().cacheWillUpdate({ response: html })).resolves.toBeNull();
+      await expect(
+        plugin().cacheWillUpdate({ response: new Response("x", { status: 200 }) }),
+      ).resolves.toBeNull();
+    });
+
+    it("does not store an error response", async () => {
+      const err = new Response("x", { status: 404, headers: { "content-type": "image/png" } });
+      await expect(plugin().cacheWillUpdate({ response: err })).resolves.toBeNull();
+    });
+  });
 });
 
 describe("push", () => {

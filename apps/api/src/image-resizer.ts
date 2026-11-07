@@ -1,9 +1,17 @@
-// Image-resizer Lambda: triggered on every S3 ObjectCreated in the images
-// bucket. Generates a 256px thumbnail and a 1024px medium variant alongside
-// the original under /thumb/<key> and /medium/<key>. Skips inputs whose key
-// already lives under one of those prefixes so the function is idempotent
-// (writing the resize result back into the same bucket would otherwise
-// re-trigger us in an infinite loop).
+// Image-resizer Lambda: triggered by S3 ObjectCreated under uploads/ in the
+// images bucket. Generates a 256px thumbnail and a 1024px medium variant under
+// img/thumb/<key> and img/medium/<key>. Skips inputs whose key already lives
+// under a variant prefix so the function is idempotent (writing the resize
+// result back into the same bucket would otherwise re-trigger us in an
+// infinite loop; the notification is also filtered to uploads/).
+//
+// Privacy (GB-R1-2): the original is the member's file as uploaded, with any
+// EXIF block (GPS position, camera serial, capture time). Only the variants
+// are ever served: CloudFront maps /img/* to the img/ prefix and the bucket
+// policy lets it read nothing else. sharp drops all metadata on output unless
+// asked to keep it, so this code must never call withMetadata/keepExif/
+// keepMetadata. rotate() first bakes the EXIF orientation into the pixels,
+// since the tag that told browsers how to turn the photo is dropped too.
 //
 // `sharp` is intentionally listed as an external in esbuild — at deploy
 // time we ship it via the AWS Lambda layer published by the sharp authors
@@ -18,8 +26,11 @@ import { captureError, initSentry } from "./lib/sentry.js";
 
 initSentry();
 
-const THUMB_PREFIX = "thumb/";
-const MEDIUM_PREFIX = "medium/";
+export const THUMB_PREFIX = "img/thumb/";
+export const MEDIUM_PREFIX = "img/medium/";
+// Variant prefixes used before GB-R1-2 (scripts/migrate-photo-keys.ts still
+// knows them). An object there is never resized again.
+const LEGACY_VARIANT_PREFIXES = ["thumb/", "medium/"];
 
 let cached: S3Client | undefined;
 
@@ -36,6 +47,7 @@ export function setS3Client(c: S3Client | undefined): void {
 // dynamically inside resizeBuffer so test bundles don't need it.
 type SharpFn = (input: Buffer) => SharpInstance;
 interface SharpInstance {
+  rotate(): SharpInstance;
   resize(opts: { width: number; height?: number; fit?: string }): SharpInstance;
   toBuffer(): Promise<Buffer>;
 }
@@ -68,7 +80,7 @@ export function isResizedKey(key: string): boolean {
   // (spaces → "+", "/" stays "/"). Comparing the raw key would miss the
   // recursion guard for keys containing decoded characters.
   const decoded = safeDecode(key);
-  return decoded.startsWith(THUMB_PREFIX) || decoded.startsWith(MEDIUM_PREFIX);
+  return decoded.startsWith("img/") || LEGACY_VARIANT_PREFIXES.some((p) => decoded.startsWith(p));
 }
 
 function safeDecode(key: string): string {
@@ -90,6 +102,12 @@ export async function resizeOne(bucket: string, key: string): Promise<ResizeResu
     return null;
   }
   const decoded = safeDecode(key);
+  // Only member uploads are resized (the bucket notification is filtered to
+  // this prefix too); anything else would land a copy under the served img/.
+  if (!decoded.startsWith("uploads/")) {
+    logger.warn({ key: decoded }, "resizer_skip_not_upload");
+    return null;
+  }
   const obj = await s3().send(new GetObjectCommand({ Bucket: bucket, Key: decoded }));
   const body = await streamToBuffer(obj.Body as Readable | undefined);
   if (!body) {
@@ -98,8 +116,8 @@ export async function resizeOne(bucket: string, key: string): Promise<ResizeResu
   }
   const sharp = await loadSharp();
   const [thumb, medium] = await Promise.all([
-    sharp(body).resize({ width: 256, fit: "inside" }).toBuffer(),
-    sharp(body).resize({ width: 1024, fit: "inside" }).toBuffer(),
+    sharp(body).rotate().resize({ width: 256, fit: "inside" }).toBuffer(),
+    sharp(body).rotate().resize({ width: 1024, fit: "inside" }).toBuffer(),
   ]);
   const thumbKey = `${THUMB_PREFIX}${decoded}`;
   const mediumKey = `${MEDIUM_PREFIX}${decoded}`;

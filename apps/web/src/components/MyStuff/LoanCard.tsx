@@ -27,9 +27,9 @@ export function LoanCard({ loan }: Props): JSX.Element {
           aria-hidden="true"
           className="h-16 w-16 flex-none overflow-hidden rounded-xl bg-workshop/10 dark:bg-surface-light/10"
         >
-          {photoUrl(loan.item.primary_photo_key) ? (
+          {photoUrl(loan.item.primary_photo_key, "thumb") ? (
             <img
-              src={photoUrl(loan.item.primary_photo_key)}
+              src={photoUrl(loan.item.primary_photo_key, "thumb")}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"

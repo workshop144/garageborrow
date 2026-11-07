@@ -132,9 +132,9 @@ export default function Wishlist(): JSX.Element {
                   <span className="text-xs font-semibold tabular-nums">{r.vote_count}</span>
                 </button>
               </div>
-              {photoUrl(r.photo_url) ? (
+              {photoUrl(r.photo_url, "thumb") ? (
                 <img
-                  src={photoUrl(r.photo_url)}
+                  src={photoUrl(r.photo_url, "thumb")}
                   alt=""
                   className="mt-3 h-20 w-20 rounded-lg object-cover"
                 />
