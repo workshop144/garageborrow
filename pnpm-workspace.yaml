@@ -22,3 +22,18 @@ peerDependencyRules:
   allowedVersions:
     # eslint-plugin-react 7.37.x declares eslint <=9 but works on 10.
     eslint-plugin-react>eslint: "10"
+
+# Security overrides for transitive dev/build dependencies (Dependabot alerts on
+# main, 2026-11-06). Each one moves only the vulnerable range to the first fixed
+# line that is older than minimumReleaseAge. Remove an entry once its parent
+# depends on a fixed version itself.
+overrides:
+  # GHSA-g3hv-75wg-m249 (globparts amplification): eslint's config-array and
+  # glob pull minimatch 10.x; no 10.x fix exists, 11.0.1+ is fixed.
+  "minimatch@>=7.0.0 <11.0.1": ^11.0.1
+  # GHSA-3g3m-2fjr-6pw4 (abort does not stop the walk): workbox-build (glob 11)
+  # and @sentry/bundler-plugins (glob 13); fixed in 14.0.2.
+  "glob@>=9.0.0 <14.0.2": ^14.0.2
+  # GHSA-rj75-hqrm-r3gf (quadratic flat selector parse): @tailwindcss/typography
+  # pins 6.0.10 exactly; 6.1.5 is the fixed 6.x release.
+  "postcss-selector-parser@<6.1.5": ^6.1.5
