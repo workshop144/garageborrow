@@ -20,5 +20,8 @@ export const env = {
   vapidPublicKey: () => readOpt("VAPID_PUBLIC_KEY") ?? "",
   notifierFunctionName: () =>
     readOpt("NOTIFIER_FUNCTION_NAME") ?? `garageborrow-notifier-${read("STAGE", "dev")}`,
-  jwtBypass: () => readOpt("JWT_BYPASS") === "1",
+  // Local-only escape hatch: trusts the x-test-phone header as the caller. Never
+  // honoured on the prod stage, so a stray JWT_BYPASS=1 in a deployed function's
+  // environment cannot turn into "anyone can sign in as anyone".
+  jwtBypass: () => readOpt("JWT_BYPASS") === "1" && read("STAGE", "dev") !== "prod",
 };

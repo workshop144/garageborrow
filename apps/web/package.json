@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "icons": "tsx ../../scripts/export-icons.ts"
   },

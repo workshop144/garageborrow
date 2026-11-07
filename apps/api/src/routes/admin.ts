@@ -309,7 +309,7 @@ adminRoutes.get("/v1/g/:garage/admin/incidents", async (c) => {
 const IncidentPatchSchema = z
   .object({
     status: IncidentStatusSchema.optional(),
-    resolution_notes: z.string().optional(),
+    resolution_notes: z.string().max(1000).optional(),
   })
   .strict();
 
@@ -326,7 +326,9 @@ adminRoutes.patch("/v1/g/:garage/admin/incidents/:id", async (c) => {
     ...existing,
     ...(body.status ? { status: body.status } : {}),
     ...(body.status && body.status !== "open" && !existing.resolved_at ? { resolved_at: ts } : {}),
-    ...(body.resolution_notes !== undefined ? { suggested_action: body.resolution_notes } : {}),
+    // Owner notes get their own field; they used to overwrite the reporter's
+    // suggested_action.
+    ...(body.resolution_notes !== undefined ? { resolution_notes: body.resolution_notes } : {}),
   };
   await putIncident(updated);
   setAuditDetails(c, {
