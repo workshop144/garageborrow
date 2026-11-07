@@ -35,6 +35,7 @@ function keyOf(it: { PK: string; SK: string }): string {
 }
 
 export function resetDdbStore(): void {
+  afterGet = undefined;
   store.items.clear();
   queryPageSize = Infinity;
   scanPageSize = Infinity;
@@ -198,6 +199,13 @@ export function onNextScan(fn: () => void): void {
   afterNextScan = fn;
 }
 
+// Runs once, right after the next Get of a row whose SK starts with `skPrefix`
+// returns: lets a test land a concurrent write between a read and its write.
+let afterGet: { skPrefix: string; fn: () => void } | undefined;
+export function onNextGet(skPrefix: string, fn: () => void): void {
+  afterGet = { skPrefix, fn };
+}
+
 // Throws a throttling error, once, for the first Put whose item matches.
 let failPut: ((item: Item) => boolean) | undefined;
 export function failNextPut(match: (item: Item) => boolean): void {
@@ -281,7 +289,14 @@ export function installDdbMock(): void {
 
   mock.on(GetCommand).callsFake((input) => {
     const k = `${input.Key.PK}#${input.Key.SK}`;
-    const item = store.items.get(k);
+    // A copy, taken before the hook runs: the caller holds a snapshot.
+    const found = store.items.get(k);
+    const item = found ? { ...found } : found;
+    const hook = afterGet;
+    if (hook && String(input.Key.SK).startsWith(hook.skPrefix)) {
+      afterGet = undefined;
+      hook.fn();
+    }
     return Promise.resolve({ Item: item });
   });
 
@@ -328,6 +343,9 @@ export function installDdbMock(): void {
     store.items.set(k, outcome.next);
     if (input.ReturnValues === "UPDATED_NEW") {
       return Promise.resolve({ Attributes: outcome.attributes });
+    }
+    if (input.ReturnValues === "ALL_NEW") {
+      return Promise.resolve({ Attributes: { ...outcome.next } });
     }
     return Promise.resolve({});
   });

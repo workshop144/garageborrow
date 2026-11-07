@@ -14,7 +14,6 @@ import type {
   AuditLogEntry,
   GarageInvite,
   Garage,
-  GarageMembership,
   IncidentReport,
   Item,
   ItemStatus,
@@ -49,7 +48,7 @@ import {
   putIncident,
   putInvite,
   putItem,
-  putMembership,
+  updateMembershipFields,
   type LoanRecord,
   getItem,
   getReservation,
@@ -169,8 +168,9 @@ adminRoutes.patch("/v1/g/:garage/admin/members/:phone", async (c) => {
   const body = MemberPatchSchema.parse(await c.req.json());
   const promoted = body.tier !== undefined && body.tier !== existing.tier;
   const promotedToFamily = promoted && body.tier === "family" && existing.tier !== "family";
-  const updated: GarageMembership = {
-    ...existing,
+  // Only the changed fields are written: borrow and return counters move by
+  // atomic ADD meanwhile, and a whole-row put would undo them (review F4).
+  const updated = await updateMembershipFields(garage.id, phone, {
     ...(body.tier ? { tier: body.tier } : {}),
     ...(body.notes !== undefined ? { notes: body.notes } : {}),
     ...(body.ai_budget_override_tokens !== undefined
@@ -179,8 +179,8 @@ adminRoutes.patch("/v1/g/:garage/admin/members/:phone", async (c) => {
     // Promotion to family lights up the celebration overlay on the next
     // /v1/me read. Demotion or lateral moves don't touch the flag.
     ...(promotedToFamily ? { celebration_pending: true } : {}),
-  };
-  await putMembership(updated);
+  });
+  if (!updated) throw new ApiError("not_found", "Member not found");
   setAuditDetails(c, {
     action_type: promoted ? "member.tier_changed" : "member.updated",
     entity_type: "member",
