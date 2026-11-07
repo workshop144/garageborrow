@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Item, Loan, Reservation, WaitlistEntry } from "@garageborrow/shared";
 
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { newIdempotencyKey } from "../lib/idempotency";
 import { DEFAULT_GARAGE_SLUG } from "./useGarageItems";
 
@@ -54,7 +54,9 @@ export function useMyStuff(garageSlug: string = DEFAULT_GARAGE_SLUG) {
           },
         );
       } catch (err) {
-        if (err instanceof Error && err.message.includes("404")) return EMPTY;
+        // ApiError.message is the API's text ("Route not found"), not the
+        // status, so match on the status itself.
+        if (err instanceof ApiError && err.status === 404) return EMPTY;
         throw err;
       }
     },

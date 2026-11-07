@@ -292,7 +292,7 @@ describe("incidents", () => {
     });
     expect(r1.status).toBe(200);
     const { incident } = (await r1.json()) as { incident: Record<string, unknown> };
-    // Bug fix (tests/coverage-2026-11-06c): notes used to overwrite suggested_action.
+    // Bug fix (tests/coverage-2026-11-06d): notes used to overwrite suggested_action.
     expect(incident).toMatchObject({
       status: "resolved",
       suggested_action: "Replace the chuck",

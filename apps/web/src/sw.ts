@@ -117,7 +117,10 @@ function sameOriginPath(url: unknown): string {
   try {
     const resolved = new URL(url, self.location.origin);
     if (resolved.origin !== self.location.origin) return NOTIFICATIONS_PATH;
-    return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+    const path = `${resolved.pathname}${resolved.search}${resolved.hash}`;
+    // "https://<us>//evil.example/x" has our origin but the path
+    // "//evil.example/x", which openWindow reads as protocol-relative.
+    return path.startsWith("//") ? NOTIFICATIONS_PATH : path;
   } catch {
     return NOTIFICATIONS_PATH;
   }

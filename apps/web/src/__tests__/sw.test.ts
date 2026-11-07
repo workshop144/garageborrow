@@ -283,6 +283,8 @@ describe("notificationclick", () => {
     ["//elsewhere.example/phish", "/me/notifications"],
     ["javascript:alert(1)", "/me/notifications"],
     ["data:text/html,hi", "/me/notifications"],
+    ["https://app.example//elsewhere.example/x", "/me/notifications"],
+    ["/\\elsewhere.example/x", "/me/notifications"],
     ["https://app.example/loans/l-1?x=1#top", "/loans/l-1?x=1#top"],
     ["/loans/l-1", "/loans/l-1"],
   ])("opens only same-origin paths: %s -> %s", async (url, expected) => {

@@ -56,8 +56,10 @@ describe("useMyStuff", () => {
     expect(result.current.data?.stats.borrows_total).toBe(4);
   });
 
-  it("treats a 404 whose message names the status as an empty My Stuff", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ error: { code: "x", message: "HTTP 404" } }, 404));
+  it("treats a 404 as an empty My Stuff", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: { code: "not_found", message: "Route not found" } }, 404),
+    );
     const { wrapper } = setup();
     const { result } = renderHook(() => useMyStuff(), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));

@@ -148,7 +148,7 @@ describe("JWT_BYPASS", () => {
     expect(await res.json()).toEqual({ phone: "+15555550199", sub: "test-+15555550199" });
   });
 
-  // Bug fix (tests/coverage-2026-11-06c): the bypass used to be honoured on any
+  // Bug fix (tests/coverage-2026-11-06d): the bypass used to be honoured on any
   // stage, so JWT_BYPASS=1 on a prod Lambda let anyone act as any phone.
   it("is ignored on the prod stage", async () => {
     process.env["JWT_BYPASS"] = "1";
