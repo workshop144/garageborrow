@@ -1,4 +1,11 @@
-import type { DonationOffer, Item, Loan, Reservation, WaitlistEntry } from "@garageborrow/shared";
+import type {
+  DonationOffer,
+  Instance,
+  Item,
+  Loan,
+  Reservation,
+  WaitlistEntry,
+} from "@garageborrow/shared";
 
 // What a donor may see of their own donation offer. The row also carries the
 // owner's private `owner_notes` and the deciding owner's phone; members never
@@ -112,4 +119,15 @@ export function myStuffItemView(item: Item | undefined, itemId: string): MyStuff
     primary_photo_key: item.primary_photo_key,
     category: item.category,
   };
+}
+
+// What a member sees of each unit on the item page (the fields the web reads).
+// Instance rows also carry the owner's private `notes`, the table keys and
+// `current_loan_id`; none of that is for members (2026-11-07 review F7).
+const MEMBER_INSTANCE_FIELDS = ["id", "label", "quality_tier", "status"] as const;
+
+export type MemberInstanceView = Pick<Instance, (typeof MEMBER_INSTANCE_FIELDS)[number]>;
+
+export function memberInstanceView(i: Instance): MemberInstanceView {
+  return pick(i, MEMBER_INSTANCE_FIELDS) as unknown as MemberInstanceView;
 }

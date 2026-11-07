@@ -6,7 +6,8 @@
 import { env } from "./env.js";
 import { newId, nowIso } from "./ids.js";
 import { logger } from "./logger.js";
-import { putNotification, queryAll } from "./repo.js";
+import { isAllowedPushEndpoint, isGonePushError } from "./push-endpoint.js";
+import { deletePushSubscription, putNotification, queryAll } from "./repo.js";
 import { sendSms } from "./sns.js";
 import type { Notification, NotificationChannel, PushSubscription } from "@garageborrow/shared";
 
@@ -66,10 +67,23 @@ export async function deliverPush(msg: ChannelMessage): Promise<number> {
   });
   let delivered = 0;
   for (const sub of subs) {
+    const sk = (sub as PushSubscription & { SK?: string }).SK;
+    // Rows stored before the API checked the host are never posted to.
+    if (!isAllowedPushEndpoint(sub.endpoint)) {
+      logger.warn({ type: msg.type }, "push_endpoint_not_allowed_skipping");
+      continue;
+    }
     try {
       await pushDriver(sub, payload);
       delivered++;
     } catch (err) {
+      if (isGonePushError(err) && sk) {
+        // The push service dropped this subscription; stop sending to it.
+        await deletePushSubscription(msg.user_phone, sk).catch((e: unknown) =>
+          logger.warn({ err: e }, "push_prune_failed"),
+        );
+        continue;
+      }
       logger.warn({ err, type: msg.type }, "push_delivery_failed");
     }
   }

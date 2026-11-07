@@ -34,7 +34,10 @@ beforeEach(() => {
   seedMembership(FAMILY_PHONE, "family");
 });
 
-function seedPushSub(phone: string, endpoint = "https://fcm.example/abc"): PushSubscription {
+function seedPushSub(
+  phone: string,
+  endpoint = "https://fcm.googleapis.com/fcm/send/abc",
+): PushSubscription {
   const sub: PushSubscription = {
     user_phone: phone,
     endpoint,

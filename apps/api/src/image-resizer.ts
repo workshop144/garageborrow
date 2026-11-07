@@ -26,6 +26,12 @@ import { captureError, initSentry } from "./lib/sentry.js";
 
 initSentry();
 
+// Largest decoded image accepted: 40 megapixels covers any phone camera
+// (a 48 MP sensor bins to 12 MP by default). sharp's default (~268 MP) let a
+// 15 MB PNG that decodes to 16k x 16k exhaust the Lambda's memory, fail, retry
+// and land in the DLQ (2026-11-07 review F11). Over the limit is permanent.
+export const MAX_INPUT_PIXELS = 40_000_000;
+
 export const THUMB_PREFIX = "img/thumb/";
 export const MEDIUM_PREFIX = "img/medium/";
 // Variant prefixes used before GB-R1-2 (scripts/migrate-photo-keys.ts still
@@ -45,8 +51,12 @@ export function setS3Client(c: S3Client | undefined): void {
 
 // Minimal subset of the sharp surface we use; the package is loaded
 // dynamically inside resizeBuffer so test bundles don't need it.
-type SharpFn = (input: Buffer) => SharpInstance;
+type SharpFn = (
+  input: Buffer,
+  opts?: { limitInputPixels?: number; failOn?: "none" | "truncated" | "error" | "warning" },
+) => SharpInstance;
 interface SharpInstance {
+  clone(): SharpInstance;
   rotate(): SharpInstance;
   resize(opts: { width: number; height?: number; fit?: string }): SharpInstance;
   toBuffer(): Promise<Buffer>;
@@ -115,9 +125,11 @@ export async function resizeOne(bucket: string, key: string): Promise<ResizeResu
     return null;
   }
   const sharp = await loadSharp();
+  // One input pipeline with a decode limit; both variants are clones of it.
+  const source = sharp(body, { limitInputPixels: MAX_INPUT_PIXELS, failOn: "error" }).rotate();
   const [thumb, medium] = await Promise.all([
-    sharp(body).rotate().resize({ width: 256, fit: "inside" }).toBuffer(),
-    sharp(body).rotate().resize({ width: 1024, fit: "inside" }).toBuffer(),
+    source.clone().resize({ width: 256, fit: "inside" }).toBuffer(),
+    source.clone().resize({ width: 1024, fit: "inside" }).toBuffer(),
   ]);
   const thumbKey = `${THUMB_PREFIX}${decoded}`;
   const mediumKey = `${MEDIUM_PREFIX}${decoded}`;
@@ -162,7 +174,7 @@ export function isPermanentResizeError(err: unknown): boolean {
   const e = err as { name?: string; Code?: string; message?: string } | undefined;
   if (e?.name === "NoSuchKey" || e?.Code === "NoSuchKey") return true;
   const msg = e?.message ?? "";
-  return /unsupported image format|corrupt|Input buffer|Input file|bad seek|VipsJpeg|pngload|webpload|heifload/i.test(
+  return /unsupported image format|corrupt|Input buffer|Input file|Input image exceeds pixel limit|bad seek|VipsJpeg|pngload|webpload|heifload/i.test(
     msg,
   );
 }

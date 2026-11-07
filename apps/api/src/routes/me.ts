@@ -11,6 +11,7 @@ import {
 } from "@garageborrow/shared";
 import type {
   GarageMembership,
+  PushSubscription,
   Loan,
   Reservation,
   User,
@@ -41,6 +42,7 @@ import {
   listDonations,
   listInvitesForPhone,
   listNotifications,
+  deletePushSubscription,
   listPushSubscriptions,
   listUserIndexRows,
   listUserProfiles,
@@ -56,13 +58,20 @@ import {
   updateUserFields,
 } from "../lib/repo.js";
 import type { AppEnv } from "../lib/types.js";
+import { isAllowedPushEndpoint, MAX_PUSH_SUBSCRIPTIONS } from "../lib/push-endpoint.js";
 import { requireAuth } from "../middleware/auth.js";
 import { resolveGarageContext } from "../middleware/garage-context.js";
 import { idempotency, requireIdempotencyKey } from "../middleware/idempotency.js";
 
 export const meRoutes = new Hono<AppEnv>();
 
-meRoutes.use("*", requireAuth());
+// Scoped to /v1/me: meRoutes is mounted at "/", so a "*" here ran for every
+// later route and unknown path (401 instead of 404, the JWT verified twice,
+// and a public route added later would fail closed unnoticed; review F13).
+// Every other router guards its own paths; auth-coverage.test.ts checks that
+// no registered route is reachable without a token.
+meRoutes.use("/v1/me", requireAuth());
+meRoutes.use("/v1/me/*", requireAuth());
 
 // What a member may see of their own membership row. The row also carries the
 // owner's private `notes`, the AI budget override, who vouched for them and
@@ -562,11 +571,15 @@ meRoutes.post("/v1/me/notifications/read-all", async (c) => {
   return c.json({ marked_read: count });
 });
 
+// Only a known browser push service, over https (F10). The keys are base64url:
+// p256dh is a 65-byte point (87 chars), auth 16 bytes (22 chars).
 const PushSubSchema = z.object({
-  endpoint: HttpUrl,
+  endpoint: HttpUrl.refine((u) => u.length <= 2048 && isAllowedPushEndpoint(u), {
+    message: "endpoint must be an https URL of a known push service",
+  }),
   keys: z.object({
-    p256dh: z.string().min(1),
-    auth: z.string().min(1),
+    p256dh: z.string().min(1).max(256),
+    auth: z.string().min(1).max(256),
   }),
 });
 
@@ -582,6 +595,15 @@ meRoutes.post("/v1/me/push-subscription", async (c) => {
   };
   const hash = createHash("sha256").update(body.endpoint).digest("hex").slice(0, 32);
   await putPushSubscription(sub, hash);
+  // Keep the newest MAX_PUSH_SUBSCRIPTIONS; older endpoints are dropped.
+  const stored = (await listPushSubscriptions(user.phone)) as (PushSubscription & {
+    SK?: string;
+  })[];
+  const excess = stored
+    .filter((p) => p.SK && p.SK !== `PUSH#${hash}`)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(MAX_PUSH_SUBSCRIPTIONS - 1);
+  for (const old of excess) await deletePushSubscription(user.phone, old.SK as string);
   // Touch the user's last_seen_at while we're here.
   const primary = await getUserAnyGarage(user.phone);
   if (primary) {

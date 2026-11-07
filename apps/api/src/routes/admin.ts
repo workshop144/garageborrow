@@ -3,6 +3,7 @@ import {
   GarageStatusSchema,
   IncidentStatusSchema,
   ItemSchema,
+  MAX_LOAN_DAYS,
   NonprofitOrgSchema,
   PhoneE164,
   ReservationStatusSchema,
@@ -609,7 +610,7 @@ const BulkItemRowSchema = z
     // CSV cells come through as "" when empty.
     primary_photo_key: PhotoKey.or(z.literal("")).optional(),
     handling_notes: z.string().optional(),
-    default_duration_days: z.coerce.number().int().positive().optional(),
+    default_duration_days: z.coerce.number().int().positive().max(MAX_LOAN_DAYS).optional(),
     requires_approval: z.coerce.boolean().optional(),
     min_tier: TierNameSchema.optional(),
     auto_approve_tier: TierNameSchema.optional(),

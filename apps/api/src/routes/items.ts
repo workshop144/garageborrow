@@ -8,6 +8,7 @@ import { mustGarage, mustMembership, mustUser } from "../lib/ctx.js";
 import { ApiError } from "../lib/errors.js";
 import { newId, nowIso } from "../lib/ids.js";
 import { invokeNotifier } from "../lib/invoke.js";
+import { memberInstanceView } from "../lib/member-views.js";
 import { paginate, parsePageParams } from "../lib/pagination.js";
 import { PhotoKey } from "../lib/photo-key.js";
 import {
@@ -196,7 +197,7 @@ itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {
   const myEntry = myIdx >= 0 ? ordered[myIdx] : undefined;
   return c.json({
     item: { ...toMemberItem(item), access, ...counts },
-    instances,
+    instances: instances.map(memberInstanceView),
     status_pills: statusPills,
     handling_notes: item.handling_notes ?? "",
     waitlist_size: ordered.length,

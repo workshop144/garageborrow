@@ -3,7 +3,14 @@ import { mockClient } from "aws-sdk-client-mock";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { handler, isResizedKey, resizeOne, setSharpForTest } from "../image-resizer.js";
+import {
+  handler,
+  isPermanentResizeError,
+  isResizedKey,
+  MAX_INPUT_PIXELS,
+  resizeOne,
+  setSharpForTest,
+} from "../image-resizer.js";
 
 const s3Mock = mockClient(S3Client);
 
@@ -54,6 +61,7 @@ describe("resizeOne", () => {
     s3Mock.on(PutObjectCommand).resolves({});
     const sharpStub = vi.fn(() => {
       const inst = {
+        clone: () => inst,
         rotate: () => inst,
         resize: () => inst,
         toBuffer: async () => Buffer.from([9, 9, 9]),
@@ -67,8 +75,12 @@ describe("resizeOne", () => {
     expect(out?.thumb_key).toBe("img/thumb/uploads/test/photo.jpg");
     expect(out?.medium_key).toBe("img/medium/uploads/test/photo.jpg");
     expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(2);
-    // Both variants come from sharp() — once per resize invocation.
-    expect(sharpStub).toHaveBeenCalledTimes(2);
+    // F11: the input is decoded once, with a pixel limit; both variants clone it.
+    expect(sharpStub).toHaveBeenCalledTimes(1);
+    expect(sharpStub).toHaveBeenCalledWith(fakeBuffer, {
+      limitInputPixels: MAX_INPUT_PIXELS,
+      failOn: "error",
+    });
   });
 });
 
@@ -168,6 +180,36 @@ describe("variants drop photo metadata", () => {
       expect(meta.orientation).toBeUndefined();
       expect(meta.height ?? 0).toBeGreaterThan(meta.width ?? 0);
     }
+  });
+
+  it("refuses a decompression bomb (over MAX_INPUT_PIXELS) as a permanent error", async () => {
+    const sharp = (await import("sharp")).default;
+    // 7000 x 7000 = 49 MP of one colour: a few KB as PNG, ~150 MB decoded.
+    const bomb = await sharp({
+      create: { width: 7000, height: 7000, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
+    expect(bomb.length).toBeLessThan(2_000_000);
+    // A fresh stream per GetObject: the handler below fetches it again.
+    s3Mock.on(GetObjectCommand).callsFake(() => ({
+      Body: streamFromBuffer(bomb) as unknown as never,
+      ContentType: "image/png",
+    }));
+    s3Mock.on(PutObjectCommand).resolves({});
+    setSharpForTest(undefined);
+    const err = await resizeOne("bucket", "uploads/tool_photo/bomb.png").catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/pixel limit/);
+    expect(isPermanentResizeError(err)).toBe(true);
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(0);
+    // The handler swallows it: no retry, nothing lands in the DLQ.
+    await expect(
+      handler({
+        Records: [
+          { s3: { bucket: { name: "bucket" }, object: { key: "uploads/tool_photo/bomb.png" } } },
+        ],
+      }),
+    ).resolves.toEqual({ processed: 0 });
   });
 
   it("never resizes a key outside uploads/", async () => {

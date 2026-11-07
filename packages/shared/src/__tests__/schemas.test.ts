@@ -8,6 +8,7 @@ import {
   IncidentReportSchema,
   InstanceSchema,
   ItemSchema,
+  MAX_LOAN_DAYS,
   LoanSchema,
   NonprofitOrgSchema,
   NotificationSchema,
@@ -178,6 +179,15 @@ describe("ItemSchema", () => {
     const r = ItemSchema.safeParse({ ...valid, status: "exploded" });
     expect(r.success).toBe(false);
     if (!r.success) expect(pathOf(r.error)).toEqual(["status"]);
+  });
+  it("bounds default_duration_days at MAX_LOAN_DAYS (review F9)", () => {
+    expect(MAX_LOAN_DAYS).toBe(60);
+    expect(ItemSchema.safeParse({ ...valid, default_duration_days: 60 }).success).toBe(true);
+    for (const d of [61, 1e8]) {
+      const r = ItemSchema.safeParse({ ...valid, default_duration_days: d });
+      expect(r.success).toBe(false);
+      if (!r.success) expect(pathOf(r.error)).toEqual(["default_duration_days"]);
+    }
   });
 });
 
