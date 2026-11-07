@@ -20,7 +20,9 @@ afterEach(() => {
 });
 
 describe("isResizedKey", () => {
-  it("returns true for thumb/ and medium/ prefixes", () => {
+  it("returns true for img/ variant prefixes and the legacy thumb/ and medium/ ones", () => {
+    expect(isResizedKey("img/thumb/uploads/a/foo.jpg")).toBe(true);
+    expect(isResizedKey("img/medium/uploads/a/bar.png")).toBe(true);
     expect(isResizedKey("thumb/foo.jpg")).toBe(true);
     expect(isResizedKey("medium/bar.png")).toBe(true);
   });
@@ -52,6 +54,7 @@ describe("resizeOne", () => {
     s3Mock.on(PutObjectCommand).resolves({});
     const sharpStub = vi.fn(() => {
       const inst = {
+        rotate: () => inst,
         resize: () => inst,
         toBuffer: async () => Buffer.from([9, 9, 9]),
       };
@@ -61,8 +64,8 @@ describe("resizeOne", () => {
 
     const out = await resizeOne("bucket", "uploads/test/photo.jpg");
     expect(out).not.toBeNull();
-    expect(out?.thumb_key).toBe("thumb/uploads/test/photo.jpg");
-    expect(out?.medium_key).toBe("medium/uploads/test/photo.jpg");
+    expect(out?.thumb_key).toBe("img/thumb/uploads/test/photo.jpg");
+    expect(out?.medium_key).toBe("img/medium/uploads/test/photo.jpg");
     expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(2);
     // Both variants come from sharp() — once per resize invocation.
     expect(sharpStub).toHaveBeenCalledTimes(2);
@@ -91,5 +94,87 @@ describe("handler retries", () => {
       throw new Error("Input buffer contains unsupported image format");
     }) as never);
     await expect(handler(event("uploads/item/b.jpg") as never)).resolves.toEqual({ processed: 0 });
+  });
+});
+
+// GB-R1-2: the variants are the only images members ever load, so they must
+// carry no EXIF (GPS position of a member's home, camera serial, capture time).
+// Runs the real sharp, not a stub.
+describe("variants drop photo metadata", () => {
+  async function jpegWithGps(orientation = 1): Promise<Buffer> {
+    const sharp = (await import("sharp")).default;
+    return sharp({
+      create: { width: 1600, height: 800, channels: 3, background: { r: 200, g: 40, b: 40 } },
+    })
+      .jpeg()
+      .withExif({
+        IFD0: { Make: "TestCam", Model: "Serial-12345" },
+        IFD3: {
+          GPSLatitudeRef: "N",
+          GPSLatitude: "40/1 26/1 46/1",
+          GPSLongitudeRef: "W",
+          GPSLongitude: "79/1 58/1 56/1",
+        },
+      })
+      .withMetadata({ orientation })
+      .toBuffer();
+  }
+
+  async function resizeWithRealSharp(input: Buffer, key: string): Promise<Buffer[]> {
+    s3Mock.on(GetObjectCommand).resolves({
+      Body: streamFromBuffer(input) as unknown as never,
+      ContentType: "image/jpeg",
+    });
+    s3Mock.on(PutObjectCommand).resolves({});
+    setSharpForTest(undefined);
+    const out = await resizeOne("bucket", key);
+    expect(out).not.toBeNull();
+    return s3Mock.commandCalls(PutObjectCommand).map((c) => c.args[0].input.Body as Buffer);
+  }
+
+  it("the fixture really has GPS EXIF (guards the test itself)", async () => {
+    const sharp = (await import("sharp")).default;
+    const meta = await sharp(await jpegWithGps()).metadata();
+    expect(meta.exif?.length ?? 0).toBeGreaterThan(0);
+    expect(meta.exif?.toString("latin1")).toContain("Serial-12345");
+    expect((await sharp(await jpegWithGps(6)).metadata()).orientation).toBe(6);
+  });
+
+  it("writes thumb and medium with no EXIF, XMP, IPTC or ICC block", async () => {
+    const sharp = (await import("sharp")).default;
+    const outputs = await resizeWithRealSharp(await jpegWithGps(), "uploads/wishlist_photo/a.jpg");
+    expect(outputs).toHaveLength(2);
+    for (const buf of outputs) {
+      const meta = await sharp(buf).metadata();
+      expect(meta.exif).toBeUndefined();
+      expect(meta.xmp).toBeUndefined();
+      expect(meta.iptc).toBeUndefined();
+      expect(meta.icc).toBeUndefined();
+      expect(meta.orientation).toBeUndefined();
+      expect(buf.toString("latin1")).not.toContain("Serial-12345");
+      expect(buf.toString("latin1")).not.toContain("Exif\0\0");
+    }
+    const widths = await Promise.all(outputs.map(async (b) => (await sharp(b).metadata()).width));
+    expect(widths.sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([256, 1024]);
+  });
+
+  it("bakes the EXIF orientation into the pixels before dropping the tag", async () => {
+    const sharp = (await import("sharp")).default;
+    // Orientation 6 = rotate 90° clockwise to display: the 1600x800 landscape
+    // pixels are a portrait photo, so the variants must come out portrait.
+    const outputs = await resizeWithRealSharp(await jpegWithGps(6), "uploads/tool_photo/r.jpg");
+    for (const buf of outputs) {
+      const meta = await sharp(buf).metadata();
+      expect(meta.orientation).toBeUndefined();
+      expect(meta.height ?? 0).toBeGreaterThan(meta.width ?? 0);
+    }
+  });
+
+  it("never resizes a key outside uploads/", async () => {
+    setSharpForTest(() => {
+      throw new Error("should not be called");
+    });
+    expect(await resizeOne("bucket", "other/x.jpg")).toBeNull();
+    expect(s3Mock.commandCalls(GetObjectCommand)).toHaveLength(0);
   });
 });

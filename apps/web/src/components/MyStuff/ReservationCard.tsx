@@ -31,9 +31,9 @@ export function ReservationCard({ reservation }: Props): JSX.Element {
           aria-hidden="true"
           className="h-14 w-14 flex-none overflow-hidden rounded-xl bg-workshop/10 dark:bg-surface-light/10"
         >
-          {photoUrl(reservation.item.primary_photo_key) ? (
+          {photoUrl(reservation.item.primary_photo_key, "thumb") ? (
             <img
-              src={photoUrl(reservation.item.primary_photo_key)}
+              src={photoUrl(reservation.item.primary_photo_key, "thumb")}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"

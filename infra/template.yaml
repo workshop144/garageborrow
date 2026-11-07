@@ -372,8 +372,15 @@ Resources:
             MaxAge: 3600
       NotificationConfiguration:
         LambdaConfigurations:
+          # Only member uploads are resized; the resizer's own img/ variants
+          # must not re-trigger it.
           - Event: s3:ObjectCreated:*
             Function: !GetAtt ImageResizerFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
       LifecycleConfiguration:
         Rules:
           - Id: NoncurrentToGlacierIR
@@ -491,6 +498,10 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
 
+  # CloudFront serves /img/* straight from the bucket's img/ prefix, where the
+  # resizer writes the metadata-free thumb and medium variants. Originals under
+  # uploads/ keep the uploader's EXIF (GPS position) and are never readable
+  # through the CDN (GB-R1-2).
   ImagesBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -502,7 +513,7 @@ Resources:
             Principal:
               Service: cloudfront.amazonaws.com
             Action: s3:GetObject
-            Resource: !Sub ${ImagesBucket.Arn}/*
+            Resource: !Sub ${ImagesBucket.Arn}/img/*
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
@@ -611,12 +622,11 @@ Resources:
               Resource:
                 - !GetAtt GarageBorrowTable.Arn
                 - !Sub ${GarageBorrowTable.Arn}/index/*
+            # The API only presigns member uploads (routes/uploads.ts); it never
+            # reads, deletes or writes the served img/ variants (GB-R1-2).
             - Effect: Allow
-              Action:
-                - s3:GetObject
-                - s3:PutObject
-                - s3:DeleteObject
-              Resource: !Sub ${ImagesBucket.Arn}/*
+              Action: s3:PutObject
+              Resource: !Sub ${ImagesBucket.Arn}/uploads/*
             - Effect: Allow
               Action: sns:Publish
               Resource: "*"
@@ -751,11 +761,13 @@ Resources:
           IMAGES_BUCKET: !Sub garageborrow-images-${Stage}
       Policies:
         - Statement:
+            # Reads originals, writes only the served variants (GB-R1-2).
             - Effect: Allow
-              Action:
-                - s3:GetObject
-                - s3:PutObject
-              Resource: !Sub arn:${AWS::Partition}:s3:::garageborrow-images-${Stage}/*
+              Action: s3:GetObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::garageborrow-images-${Stage}/uploads/*
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::garageborrow-images-${Stage}/img/*
             - Effect: Allow
               Action: sqs:SendMessage
               Resource: !GetAtt ImageResizerDLQ.Arn

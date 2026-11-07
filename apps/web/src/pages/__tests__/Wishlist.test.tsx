@@ -166,7 +166,8 @@ describe("Wishlist photos and hidden members", () => {
     const { container } = render(wrap(<Wishlist />));
     await waitFor(() => expect(screen.getByText("Pressure washer")).toBeInTheDocument());
     const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
-    expect(srcs).toEqual([expect.stringMatching(/\/img\/uploads\/wishlist\/abc\.jpg$/)]);
+    // GB-R1-2: the list shows the metadata-free thumb variant, never the original.
+    expect(srcs).toEqual([expect.stringMatching(/\/img\/thumb\/uploads\/wishlist\/abc\.jpg$/)]);
     expect(container.innerHTML).not.toContain("..");
   });
 

@@ -21,9 +21,9 @@ export function WaitlistItem({ entry }: Props): JSX.Element {
           aria-hidden="true"
           className="h-12 w-12 flex-none overflow-hidden rounded-xl bg-workshop/10 dark:bg-surface-light/10"
         >
-          {photoUrl(entry.item.primary_photo_key) ? (
+          {photoUrl(entry.item.primary_photo_key, "thumb") ? (
             <img
-              src={photoUrl(entry.item.primary_photo_key)}
+              src={photoUrl(entry.item.primary_photo_key, "thumb")}
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"
