@@ -254,7 +254,7 @@ const COPY: Record<string, { title: string; body: string }> = {
   },
   wishlist_digest: {
     title: "New wishlist requests",
-    body: "Folks added requests overnight — check the wishlist when you get a chance.",
+    body: "Open the app to see what folks are wishing for.",
   },
 };
 
@@ -481,18 +481,16 @@ async function dispatchWishlistDigest(garage_id: string, now: Date): Promise<boo
   if (fresh.length === 0) return false;
   const owner = await getUser(garage_id, garage.owner_phone);
   if (!owner) return false;
-  const names = fresh
-    .map((r) => r.item_name)
-    .slice(0, 5)
-    .join(", ");
-  const moreSuffix = fresh.length > 5 ? `, +${fresh.length - 5} more` : "";
+  // Static copy only (GB-F5-3): item names are member-written and this goes
+  // out by SMS from the number the owner trusts for sign-in codes. The app
+  // shows the requests themselves (by id) on the wishlist page.
   await dispatch({
     user: owner,
     garage_id,
     prefs: owner.notification_prefs,
     type: "wishlist_digest",
     title: `${fresh.length} new wishlist request${fresh.length === 1 ? "" : "s"}`,
-    body: `${names}${moreSuffix}`,
+    body: COPY["wishlist_digest"]!.body,
     payload: { count: fresh.length, request_ids: fresh.map((r) => r.id) },
     urgent: false,
     now,

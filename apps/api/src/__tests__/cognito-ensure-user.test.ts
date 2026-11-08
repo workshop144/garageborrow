@@ -33,7 +33,7 @@ afterEach(() => {
 describe("ensureCognitoUser", () => {
   it("returns false and creates nothing when the user already exists", async () => {
     cognito.on(AdminGetUserCommand).resolves({ Username: PHONE });
-    await expect(ensureCognitoUser(PHONE)).resolves.toBe(false);
+    await expect(ensureCognitoUser(PHONE, true)).resolves.toBe(false);
     expect(cognito.commandCalls(AdminCreateUserCommand)).toHaveLength(0);
     expect(cognito.commandCalls(AdminSetUserPasswordCommand)).toHaveLength(0);
   });
@@ -43,7 +43,7 @@ describe("ensureCognitoUser", () => {
     cognito.on(AdminCreateUserCommand).resolves({});
     cognito.on(AdminSetUserPasswordCommand).resolves({});
 
-    await expect(ensureCognitoUser(PHONE)).resolves.toBe(true);
+    await expect(ensureCognitoUser(PHONE, true)).resolves.toBe(true);
 
     const create = cognito.commandCalls(AdminCreateUserCommand)[0]?.args[0].input;
     expect(create).toMatchObject({
@@ -68,8 +68,8 @@ describe("ensureCognitoUser", () => {
     cognito.on(AdminGetUserCommand).rejects(named("UserNotFoundException"));
     cognito.on(AdminCreateUserCommand).resolves({});
     cognito.on(AdminSetUserPasswordCommand).resolves({});
-    await ensureCognitoUser(PHONE);
-    await ensureCognitoUser("+15555550143");
+    await ensureCognitoUser(PHONE, true);
+    await ensureCognitoUser("+15555550143", true);
     const [a, b] = cognito
       .commandCalls(AdminSetUserPasswordCommand)
       .map((c) => c.args[0].input.Password);
@@ -80,26 +80,42 @@ describe("ensureCognitoUser", () => {
   it("treats a concurrent create (UsernameExistsException) as already existing", async () => {
     cognito.on(AdminGetUserCommand).rejects(named("UserNotFoundException"));
     cognito.on(AdminCreateUserCommand).rejects(named("UsernameExistsException"));
-    await expect(ensureCognitoUser(PHONE)).resolves.toBe(false);
+    await expect(ensureCognitoUser(PHONE, true)).resolves.toBe(false);
     expect(cognito.commandCalls(AdminSetUserPasswordCommand)).toHaveLength(0);
   });
 
   it("rethrows any other lookup error instead of creating a user", async () => {
     cognito.on(AdminGetUserCommand).rejects(named("TooManyRequestsException"));
-    await expect(ensureCognitoUser(PHONE)).rejects.toThrow("TooManyRequestsException");
+    await expect(ensureCognitoUser(PHONE, true)).rejects.toThrow("TooManyRequestsException");
     expect(cognito.commandCalls(AdminCreateUserCommand)).toHaveLength(0);
   });
 
   it("rethrows a non-duplicate create error and does not set a password", async () => {
     cognito.on(AdminGetUserCommand).rejects(named("UserNotFoundException"));
     cognito.on(AdminCreateUserCommand).rejects(named("InvalidParameterException"));
-    await expect(ensureCognitoUser(PHONE)).rejects.toThrow("InvalidParameterException");
+    await expect(ensureCognitoUser(PHONE, true)).rejects.toThrow("InvalidParameterException");
     expect(cognito.commandCalls(AdminSetUserPasswordCommand)).toHaveLength(0);
+  });
+
+  it("still looks the user up when it may not create one, and creates nothing (GB-F5-2)", async () => {
+    cognito.on(AdminGetUserCommand).rejects(named("UserNotFoundException"));
+    await expect(ensureCognitoUser(PHONE, false)).resolves.toBe(false);
+    expect(cognito.commandCalls(AdminGetUserCommand)).toHaveLength(1);
+    expect(cognito.commandCalls(AdminCreateUserCommand)).toHaveLength(0);
+    expect(cognito.commandCalls(AdminSetUserPasswordCommand)).toHaveLength(0);
+  });
+
+  it("looks up an existing user the same way whether or not it may create", async () => {
+    cognito.on(AdminGetUserCommand).resolves({ Username: PHONE });
+    await expect(ensureCognitoUser(PHONE, false)).resolves.toBe(false);
+    await expect(ensureCognitoUser(PHONE, true)).resolves.toBe(false);
+    expect(cognito.commandCalls(AdminGetUserCommand)).toHaveLength(2);
+    expect(cognito.commandCalls(AdminCreateUserCommand)).toHaveLength(0);
   });
 
   it("fails with internal_error when USER_POOL_ID is not configured", async () => {
     delete process.env["USER_POOL_ID"];
-    await expect(ensureCognitoUser(PHONE)).rejects.toMatchObject({ code: "internal_error" });
+    await expect(ensureCognitoUser(PHONE, true)).rejects.toMatchObject({ code: "internal_error" });
     expect(cognito.calls()).toHaveLength(0);
   });
 
@@ -109,7 +125,7 @@ describe("ensureCognitoUser", () => {
       seen.push(p);
       return Promise.resolve(true);
     });
-    await expect(ensureCognitoUser(PHONE)).resolves.toBe(true);
+    await expect(ensureCognitoUser(PHONE, true)).resolves.toBe(true);
     expect(seen).toEqual([PHONE]);
     expect(cognito.calls()).toHaveLength(0);
   });

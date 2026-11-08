@@ -19,8 +19,11 @@ import {
 import { env } from "./env.js";
 import { ApiError } from "./errors.js";
 
-// Returns true when a user was created, false when one already existed.
-export type EnsureUser = (phone: string) => Promise<boolean>;
+// Returns true when a user was created, false when one already existed or
+// `create` was false. The lookup (AdminGetUser) runs either way, so a caller
+// of /v1/auth/start cannot tell from the response time whether the number
+// belongs to the garage (GB-F5-2).
+export type EnsureUser = (phone: string, create: boolean) => Promise<boolean>;
 
 let override: EnsureUser | undefined;
 let client: CognitoIdentityProviderClient | undefined;
@@ -35,8 +38,8 @@ function errName(err: unknown): string {
     : "";
 }
 
-export async function ensureCognitoUser(phone: string): Promise<boolean> {
-  if (override) return override(phone);
+export async function ensureCognitoUser(phone: string, create: boolean): Promise<boolean> {
+  if (override) return override(phone, create);
   const UserPoolId = env.userPoolId();
   if (!UserPoolId) throw new ApiError("internal_error", "USER_POOL_ID not configured");
   client ??= new CognitoIdentityProviderClient({ region: env.region() });
@@ -46,6 +49,7 @@ export async function ensureCognitoUser(phone: string): Promise<boolean> {
   } catch (err) {
     if (errName(err) !== "UserNotFoundException") throw err;
   }
+  if (!create) return false;
   try {
     await client.send(
       new AdminCreateUserCommand({
