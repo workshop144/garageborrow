@@ -109,6 +109,16 @@ export default function Login(): JSX.Element {
     }
   }
 
+  // A saved session is being restored (GB-F5-1): don't offer to text a code
+  // that may not be needed.
+  if (status === "loading") {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm opacity-70">
+        Loading…
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-xl border border-workshop/10 dark:border-surface-light/10 bg-surface-light dark:bg-surface-dark p-6 shadow-xs">

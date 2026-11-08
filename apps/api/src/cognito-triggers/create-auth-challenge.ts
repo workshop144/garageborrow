@@ -54,7 +54,9 @@ function previousCode(
 // caller IP or device (only Cognito's paid threat protection does), so nothing
 // here can tell the member's own attempt from the attacker's, and any budget
 // an outsider can spend they can also exhaust. It is limited by the 30-day
-// refresh token (a signed-in member does not need a code), and every capped
+// refresh token: the PWA keeps it until sign-out and restores the session on
+// launch (GB-F5-1, apps/web/src/lib/auth), so a signed-in member does not need
+// a code and only members signing in fresh are affected. Every capped
 // attempt is logged as event "sms_capped" with the scope and the last 4
 // digits, and the first one per phone per day as "sms_phone_day_lockout",
 // which the "sms-capped" CloudWatch Logs Insights query in infra/template.yaml

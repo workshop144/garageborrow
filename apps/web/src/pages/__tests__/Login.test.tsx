@@ -87,6 +87,14 @@ async function reachChallenge(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Login — phone step", () => {
+  it("offers no code while a saved session is being restored (GB-F5-1)", () => {
+    auth.state.status = "loading";
+    mount();
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Text me a code" })).toBeNull();
+    expect(auth.beginPhoneSignIn).not.toHaveBeenCalled();
+  });
+
   it("formats the number as typed and rejects an invalid one without calling auth", async () => {
     const user = userEvent.setup();
     mount();

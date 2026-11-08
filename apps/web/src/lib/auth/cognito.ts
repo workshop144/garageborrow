@@ -9,10 +9,11 @@ import {
 
 import { cognitoIds } from "../runtime-config";
 
-// The session lives only in React state (a reload signs you out), so the
-// library's token cache must not outlive the page either. Its default is
-// window.localStorage, which would keep a 30-day refresh token on the device
-// after the app shows the user signed out.
+// The library's token cache (ID, access and refresh token) stays in memory. Its
+// default is window.localStorage, which would keep every token on the device
+// under keys this app does not manage. The one thing that outlives a reload is
+// the saved session below (refresh token + username), which the app owns and
+// clears on sign-out.
 const memory = new Map<string, string>();
 export const memoryStorage: ICognitoStorage = {
   setItem: (key, value) => {
@@ -41,6 +42,74 @@ export function purgePersistedTokens(): void {
   } catch {
     // Storage unavailable (private mode, blocked): nothing persisted there.
   }
+}
+
+// GB-F5-1: the refresh token (and the username it belongs to) is kept until
+// sign-out so a reload or a new launch of the installed PWA restores the session
+// with refreshSession() instead of texting a new code. Without it every app open
+// cost an SMS and ran into the per-phone caps of the create-auth trigger
+// (GB-R1-3). ID and access tokens are never written here; they live in memory
+// and are minted again from the refresh token. Sign-out revokes the token at
+// Cognito (RevokeToken) and deletes this entry.
+export const SESSION_STORAGE_KEY = "gb:session";
+
+export type SavedSession = { username: string; refreshToken: string };
+
+export function saveSession(session: SavedSession): void {
+  try {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({ username: session.username, refreshToken: session.refreshToken }),
+    );
+  } catch {
+    // Storage unavailable (private mode, blocked, full): the session stays
+    // memory-only and the next launch asks for a code, as before.
+  }
+}
+
+export function loadSession(): SavedSession | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as SavedSession).username === "string" &&
+      typeof (parsed as SavedSession).refreshToken === "string" &&
+      (parsed as SavedSession).username.length > 0 &&
+      (parsed as SavedSession).refreshToken.length > 0
+    ) {
+      return {
+        username: (parsed as SavedSession).username,
+        refreshToken: (parsed as SavedSession).refreshToken,
+      };
+    }
+  } catch {
+    // Unreadable or corrupt: treat as signed out (and drop it below).
+  }
+  clearSavedSession();
+  return null;
+}
+
+export function clearSavedSession(): void {
+  try {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // Storage unavailable: nothing saved there.
+  }
+}
+
+// True when Cognito refused the refresh token itself (expired, revoked, user
+// gone), as opposed to a network or throttling failure worth retrying.
+export function isSessionRejected(err: unknown): boolean {
+  const e = err as { code?: unknown; name?: unknown } | null;
+  const code = typeof e?.code === "string" ? e.code : typeof e?.name === "string" ? e.name : "";
+  return (
+    code === "NotAuthorizedException" ||
+    code === "UserNotFoundException" ||
+    code === "InvalidParameterException"
+  );
 }
 
 let _pool: CognitoUserPool | null = null;
@@ -154,5 +223,6 @@ export function signOut(refreshToken?: string): void {
   }
   userCache.clear();
   memory.clear();
+  clearSavedSession();
   purgePersistedTokens();
 }
