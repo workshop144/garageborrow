@@ -6,12 +6,13 @@ import { setSmsDriver } from "../lib/channels.js";
 import {
   FAMILY_PHONE,
   GARAGE_ID,
+  OWNER_PHONE,
   seedGarage,
   seedLoanRecord,
   seedMembership,
   seedUser,
 } from "./_fixtures.js";
-import { installDdbMock, resetDdbStore, seedItem } from "./_setup.js";
+import { installDdbMock, listAll, resetDdbStore, seedItem } from "./_setup.js";
 
 beforeEach(() => {
   resetDdbStore();
@@ -109,5 +110,51 @@ describe("notifier cron sweep", () => {
     });
     expect(counts.reservations_tomorrow).toBe(1);
     setSmsDriver(undefined);
+  });
+});
+
+describe("wishlist digest (GB-F5-3)", () => {
+  it("texts the owner static copy and never the member-written item names", async () => {
+    seedUser(OWNER_PHONE);
+    const now = new Date("2026-04-26T13:00:00Z");
+    const lure = "Free drill! Verify your account at https://evil.example/x";
+    for (let i = 0; i < 7; i++) {
+      seedItem({
+        PK: `TENANT#${GARAGE_ID}`,
+        SK: `WISH#wish-${i}`,
+        id: `wish-${i}`,
+        garage_id: GARAGE_ID,
+        item_name: i === 0 ? lure : `Request ${i}`,
+        status: "open",
+        created_at: "2026-04-26T08:00:00Z",
+      });
+    }
+    const sent: Array<{ phone: string; body: string }> = [];
+    setSmsDriver((phone, body) => {
+      sent.push({ phone, body });
+      return Promise.resolve();
+    });
+    try {
+      const counts = await runCronSweep({ now, garage_ids: [GARAGE_ID] });
+      expect(counts.wishlist_digests).toBe(1);
+    } finally {
+      setSmsDriver(undefined);
+    }
+    const toOwner = sent.filter((m) => m.phone === OWNER_PHONE);
+    expect(toOwner).toHaveLength(1);
+    expect(toOwner[0]?.body).toBe(
+      "7 new wishlist requests\nOpen the app to see what folks are wishing for.",
+    );
+    expect(toOwner[0]?.body).not.toContain("evil.example");
+    expect(toOwner[0]?.body).not.toContain("Request 1");
+
+    // The in-app record carries ids and a count only, no request text either.
+    const notes = listAll().filter((it) => String(it.SK).startsWith("NOTIFICATION#"));
+    const digest = notes.find((n) => n["type"] === "wishlist_digest");
+    expect(digest?.["payload"]).toEqual({
+      count: 7,
+      request_ids: expect.arrayContaining(["wish-0", "wish-6"]) as unknown,
+    });
+    expect(JSON.stringify(digest)).not.toContain("evil.example");
   });
 });

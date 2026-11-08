@@ -6,7 +6,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../index.js";
 import { setEnsureCognitoUser } from "../lib/cognito.js";
@@ -21,16 +22,20 @@ import {
 } from "./_setup.js";
 
 const NEW_PHONE = "+13175550140";
+// Phones the route allowed to be created, and every Cognito lookup it made.
 let ensured: string[] = [];
+let lookedUp: string[] = [];
 
 beforeEach(() => {
   resetDdbStore();
   installDdbMock();
   installFakeAuth();
   ensured = [];
-  setEnsureCognitoUser((phone) => {
-    ensured.push(phone);
-    return Promise.resolve(true);
+  lookedUp = [];
+  setEnsureCognitoUser((phone, create) => {
+    lookedUp.push(phone);
+    if (create) ensured.push(phone);
+    return Promise.resolve(create);
   });
 });
 
@@ -112,6 +117,35 @@ describe("POST /v1/auth/start", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: "ok", retry_after_seconds: 60 });
     expect(ensured).toEqual([]);
+  });
+
+  it("does the same lookups for a non-member as for a member (GB-F5-2 timing)", async () => {
+    seedGarage();
+    seedUser(OWNER_PHONE);
+    await invite(NEW_PHONE);
+    const stranger = "+13175550199";
+    const deleted = "+13175550198";
+    seedUser(deleted, { deleted_at: "2026-09-01T00:00:00Z" });
+    const send = vi.spyOn(DynamoDBDocumentClient.prototype, "send");
+    const shapes: string[][] = [];
+    for (const phone of [OWNER_PHONE, NEW_PHONE, stranger, deleted]) {
+      send.mockClear();
+      expect((await start(phone)).status).toBe(200);
+      // Command types with phone-free key prefixes: identical for every number.
+      shapes.push(
+        send.mock.calls.map(([cmd]) => {
+          const input = (cmd as { input: { KeyConditionExpression?: string; IndexName?: string } })
+            .input;
+          return `${cmd.constructor.name}:${input.IndexName ?? ""}:${input.KeyConditionExpression ?? ""}`;
+        }),
+      );
+    }
+    send.mockRestore();
+    expect(shapes[0]?.filter((s) => s.startsWith("QueryCommand"))).toHaveLength(2);
+    for (const shape of shapes) expect(shape).toEqual(shapes[0]);
+    // The Cognito lookup runs for every number, eligible or not.
+    expect(lookedUp).toEqual([OWNER_PHONE, NEW_PHONE, stranger, deleted]);
+    expect(ensured).toEqual([OWNER_PHONE, NEW_PHONE]);
   });
 
   it("creates the account for an invited number", async () => {

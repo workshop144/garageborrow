@@ -26,6 +26,13 @@ export const authRoutes = new Hono<AppEnv>();
 // number is known, so it can't be used to probe who is a member; an unknown
 // number simply never receives a code (the create-auth trigger sends none).
 //
+// The work is the same too (GB-F5-2): every number that passes the rate limits
+// gets both DynamoDB lookups (in parallel) and the Cognito AdminGetUser, so the
+// response time does not say whether it is a member or invitee. The only
+// remaining difference is the one-time AdminCreateUser + AdminSetUserPassword
+// for an invited number that has never signed in; after that first start the
+// number looks like every other (documented in STATE.md).
+//
 // Rate limits, before any Cognito call: one start per phone per 60 s, 5 per
 // phone per hour, 20 per client IP per hour. The SMS itself is also capped in
 // the create-auth trigger, since Cognito's InitiateAuth is callable directly.
@@ -74,13 +81,13 @@ authRoutes.post("/v1/auth/start", async (c) => {
   }
   await putRateLimit(PHONE_COOLDOWN_BUCKET, body.phone, PHONE_COOLDOWN_SECONDS, now);
 
-  const profiles = await listUserProfiles(body.phone);
+  const [profiles, invites] = await Promise.all([
+    listUserProfiles(body.phone),
+    listInvitesForPhone(body.phone, now),
+  ]);
   const deleted = profiles.some((p) => p.deleted_at);
-  const eligible =
-    !deleted && (profiles.length > 0 || (await listInvitesForPhone(body.phone, now)).length > 0);
-  if (eligible) {
-    const created = await ensureCognitoUser(body.phone);
-    if (created) logger.info({ event: "account_created" }, "cognito user created from invite");
-  }
+  const eligible = !deleted && (profiles.length > 0 || invites.length > 0);
+  const created = await ensureCognitoUser(body.phone, eligible);
+  if (created) logger.info({ event: "account_created" }, "cognito user created from invite");
   return c.json({ status: "ok", retry_after_seconds: PHONE_COOLDOWN_SECONDS });
 });
