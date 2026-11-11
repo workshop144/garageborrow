@@ -138,6 +138,7 @@ export default function ToolDetail(): JSX.Element {
           waitlistSize={data.waitlist_size}
           onClick={handlePrimary}
           busy={join.isPending}
+          contactHref={data.owner_contact_href ?? null}
         />
         {data.my_waitlist_entry ? (
           <button

@@ -9,21 +9,35 @@ type Props = {
   waitlistSize: number;
   onClick: () => void;
   busy?: boolean;
+  /**
+   * `sms:` link to the owner, sent by the API only with a family-only item
+   * (2026-11-07 review F12: the number is no longer built into the bundle).
+   */
+  contactHref?: string | null | undefined;
 };
 
-function smsHref(): string {
-  const dadPhone = import.meta.env.VITE_DAD_SMS_NUMBER ?? "+15555555555";
-  return `sms:${dadPhone}`;
-}
-
-export function PrimaryAction({ item, mode, waitlistSize, onClick, busy }: Props): JSX.Element {
+export function PrimaryAction({
+  item,
+  mode,
+  waitlistSize,
+  onClick,
+  busy,
+  contactHref,
+}: Props): JSX.Element {
   const baseClass =
     "block w-full rounded-2xl px-5 py-4 text-center text-lg font-semibold shadow-[0_4px_12px_-4px_rgba(0,0,0,0.25)] transition-transform active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed";
 
   if (mode === "family_only") {
+    if (!contactHref?.startsWith("sms:")) {
+      return (
+        <p className={`${baseClass} bg-tier-howdy text-workshop`} role="note">
+          Family only — ask the owner about {item.name}
+        </p>
+      );
+    }
     return (
       <a
-        href={smsHref()}
+        href={contactHref}
         aria-label={`Text Dad about ${item.name}`}
         className={`${baseClass} bg-tier-howdy text-workshop`}
       >

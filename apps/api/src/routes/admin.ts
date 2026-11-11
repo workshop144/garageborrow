@@ -602,6 +602,22 @@ adminRoutes.get("/v1/g/:garage/admin/audit-log", async (c) => {
 
 // ─────────────────────────── Bulk CSV item import ────────────────
 
+// Bulk rows are JSON from the CSV modal, which already converts cells to
+// numbers and booleans; a direct API caller may send the CSV text instead.
+// Both are accepted, but only exact spellings (2026-11-07 review F8):
+// `z.coerce` read "false" as true, "0x10" as 16 and true as 1.
+const BulkDurationDays = z
+  .union([z.number(), z.string().regex(/^\d{1,3}$/, "Expected a whole number of days")])
+  .transform((v) => Number(v))
+  .pipe(z.number().int().positive().max(MAX_LOAN_DAYS));
+const BulkBoolean = z.union([
+  z.boolean(),
+  z
+    .string()
+    .regex(/^(true|false|1|0)$/i, "Expected true, false, 1 or 0")
+    .transform((v) => v === "1" || v.toLowerCase() === "true"),
+]);
+
 const BulkItemRowSchema = z
   .object({
     name: z.string().min(1),
@@ -610,11 +626,13 @@ const BulkItemRowSchema = z
     // CSV cells come through as "" when empty.
     primary_photo_key: PhotoKey.or(z.literal("")).optional(),
     handling_notes: z.string().optional(),
-    default_duration_days: z.coerce.number().int().positive().max(MAX_LOAN_DAYS).optional(),
-    requires_approval: z.coerce.boolean().optional(),
+    default_duration_days: BulkDurationDays.optional(),
+    requires_approval: BulkBoolean.optional(),
     min_tier: TierNameSchema.optional(),
     auto_approve_tier: TierNameSchema.optional(),
-    quality_tier: z.string().optional(),
+    // In the CSV template, but an item has no quality tier (each instance
+    // does), so it is checked for shape and not stored.
+    quality_tier: z.string().max(64).optional(),
     tags: z.array(z.string().min(1)).optional(),
   })
   .strict();

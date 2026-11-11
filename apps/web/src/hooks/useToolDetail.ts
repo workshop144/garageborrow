@@ -16,6 +16,8 @@ export type ToolDetailResponse = {
   handling_notes: string;
   waitlist_size: number;
   my_waitlist_entry: WaitlistMembership | null;
+  /** `sms:` link to the owner; only set for a family-only item (F12). */
+  owner_contact_href?: string | null;
 };
 
 export function toolDetailQueryKey(garageSlug: string, itemId: string): readonly unknown[] {
