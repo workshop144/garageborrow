@@ -194,12 +194,13 @@ describe("ToolDetail page", () => {
     expect(screen.getByTestId("borrow-drawer")).toHaveAttribute("data-mode", "request");
   });
 
-  it("family-only tools render an sms link and never open the drawer", async () => {
-    detail = makeDetail({}, { min_tier: "family" });
+  it("family-only tools render the API's sms link and never open the drawer", async () => {
+    detail = makeDetail({ owner_contact_href: "sms:+15555550000" }, { min_tier: "family" });
     renderPage();
-    expect(
-      await screen.findByRole("link", { name: /^Text .+ about Hand Drill/ }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /^Text .+ about Hand Drill/ })).toHaveAttribute(
+      "href",
+      "sms:+15555550000",
+    );
     expect(screen.queryByRole("button", { name: "Borrow it" })).toBeNull();
   });
 

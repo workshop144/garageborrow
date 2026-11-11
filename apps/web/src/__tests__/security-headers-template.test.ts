@@ -31,6 +31,20 @@ describe("CloudFront security headers (infra/template.yaml)", () => {
     expect(headerCsp).not.toMatch(/'unsafe-eval'|script-src[^;]*'unsafe-inline'/);
   });
 
+  it("lets the browser PUT photos to every stage's images bucket (Fable GB-F5-I1)", () => {
+    const stages = /\n {2}Stage:\n(?: {4}.*\n)*? {4}AllowedValues:\n((?: {6}- .*\n)+)/
+      .exec(template)?.[1]
+      ?.match(/- (\S+)/g)
+      ?.map((s) => s.slice(2));
+    expect(stages?.length).toBeGreaterThan(0);
+    expect(resource("ImagesBucket")).toMatch(/BucketName: !Sub garageborrow-images-\$\{Stage\}/);
+    const connect = /connect-src ([^;]+);/.exec(headerCsp ?? "")?.[1]?.split(/\s+/) ?? [];
+    for (const stage of stages ?? []) {
+      expect(connect).toContain(`https://garageborrow-images-${stage}.s3.us-east-2.amazonaws.com`);
+    }
+    expect(connect).not.toContain("https://*.s3.us-east-2.amazonaws.com");
+  });
+
   it("sets HSTS, nosniff, DENY framing and a referrer policy, overriding the origin", () => {
     expect(policy).toMatch(/StrictTransportSecurity:\n\s+AccessControlMaxAgeSec: (\d+)/);
     const maxAge = Number(/AccessControlMaxAgeSec: (\d+)/.exec(policy)?.[1]);

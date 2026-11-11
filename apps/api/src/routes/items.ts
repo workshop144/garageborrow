@@ -166,6 +166,18 @@ itemRoutes.get("/v1/g/:garage/items", async (c) => {
   return c.json(next_cursor ? { items: page, next_cursor } : { items: page });
 });
 
+const E164 = /^\+[1-9]\d{6,14}$/;
+
+/** `sms:` link to the owner for a family-only item the caller may borrow, else null. */
+export function ownerContactHref(
+  ownerPhone: string | undefined,
+  minTier: string,
+  access: string,
+): string | null {
+  if (minTier !== "family" || access !== "instant") return null;
+  return ownerPhone && E164.test(ownerPhone) ? `sms:${ownerPhone}` : null;
+}
+
 itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {
   const garage = mustGarage(c);
   const membership = mustMembership(c);
@@ -197,6 +209,11 @@ itemRoutes.get("/v1/g/:garage/items/:id", async (c) => {
   const myEntry = myIdx >= 0 ? ordered[myIdx] : undefined;
   return c.json({
     item: { ...toMemberItem(item), access, ...counts },
+    // The "family only, text the owner" button (2026-11-07 review F12): the
+    // owner's number used to be a build variable baked into the public web
+    // bundle. Now only a member who sees that button gets it, from the
+    // garage's own owner_phone.
+    owner_contact_href: ownerContactHref(garage.owner_phone, item.min_tier, access),
     instances: instances.map(memberInstanceView),
     status_pills: statusPills,
     handling_notes: item.handling_notes ?? "",

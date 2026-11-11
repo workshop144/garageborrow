@@ -504,6 +504,9 @@ Resources:
   # meta CSP in apps/web/index.html cannot carry frame-ancestors (browsers
   # ignore it there), so without this header the PWA could be framed. The CSP
   # below must stay equal to the meta one (security-headers-template.test.ts).
+  # connect-src names each stage's ImagesBucket host: the PWA PUTs photos
+  # straight to presigned S3 URLs (Fable GB-F5-I1: without it every upload
+  # was blocked after the first deploy).
   # Response headers policies cost nothing.
   SecurityHeadersPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
@@ -513,7 +516,7 @@ Resources:
         Comment: CSP, HSTS, nosniff, frame and referrer policy for the PWA
         SecurityHeadersConfig:
           ContentSecurityPolicy:
-            ContentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.cloudfront.net https://*.s3.us-east-2.amazonaws.com; connect-src 'self' https://*.execute-api.us-east-2.amazonaws.com https://cognito-idp.us-east-2.amazonaws.com; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+            ContentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.cloudfront.net https://*.s3.us-east-2.amazonaws.com; connect-src 'self' https://*.execute-api.us-east-2.amazonaws.com https://cognito-idp.us-east-2.amazonaws.com https://garageborrow-images-dev.s3.us-east-2.amazonaws.com https://garageborrow-images-prod.s3.us-east-2.amazonaws.com; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
             Override: true
           StrictTransportSecurity:
             AccessControlMaxAgeSec: 63072000

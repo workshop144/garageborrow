@@ -56,16 +56,36 @@ describe("PrimaryAction", () => {
     expect(screen.getByRole("button", { name: "Join waitlist (#3 in line)" })).toBeInTheDocument();
   });
 
-  it("renders 'Family only — text Dad' as a disabled-style sms link", () => {
+  it("renders the family-only button as an sms link to the number the API sent", () => {
     render(
       <PrimaryAction
         item={makeItem({ min_tier: "family" })}
         mode="family_only"
         waitlistSize={0}
         onClick={vi.fn()}
+        contactHref="sms:+15555550000"
       />,
     );
     const link = screen.getByRole("link", { name: /Text Dad about Hand Drill/ });
-    expect(link).toHaveAttribute("href", expect.stringMatching(/^sms:/));
+    expect(link).toHaveAttribute("href", "sms:+15555550000");
+  });
+
+  it("has no number of its own: without the API's link it shows a note, not a link (F12)", () => {
+    for (const contactHref of [undefined, null, "javascript:alert(1)"]) {
+      const { unmount } = render(
+        <PrimaryAction
+          item={makeItem({ min_tier: "family" })}
+          mode="family_only"
+          waitlistSize={0}
+          onClick={vi.fn()}
+          contactHref={contactHref}
+        />,
+      );
+      expect(screen.queryByRole("link")).toBeNull();
+      expect(screen.getByRole("note")).toHaveTextContent(
+        "Family only — ask the owner about Hand Drill",
+      );
+      unmount();
+    }
   });
 });
